@@ -195,7 +195,13 @@ tr.clicavel:hover td { background: var(--surface-2); }
   const UFS = N.UFS.map((u) => u[0]);
   const INTERVALO = 60;          // segundos entre atualizações (o CDN do TSE renova a cada ~1 min)
   const INTERVALO_DEMO = 8;
-  const CONCORRENCIA = 6;
+  const TEMPO_LIMITE = 15000;    // ms por arquivo
+  const PRAZO_CICLO = 45000;     // depois disso o ciclo não começa novos downloads (o resto fica com a última leitura)
+  const INTERVALO_MAX = 300;     // com o TSE falhando, espera até 5 min entre tentativas
+  const CONCORRENCIA = 4;
+  // O TSE bloqueia por 10 min um IP que passa de 100 pedidos/s. Muita gente navega com o mesmo IP
+  // (rede da operadora, empresa), então cada visitante faz no máximo ~8 pedidos por segundo.
+  const ESPACO_MS = 125;
   const LIMITE_LINHAS = 30;
   // Endereço do proxy no Cloudflare Workers (veja proxy-cloudflare.js). Só é usado se o navegador
   // não conseguir ler o TSE diretamente. Ex.: 'https://apuracao-tse.SEU-USUARIO.workers.dev'
@@ -241,10 +247,17 @@ tr.clicavel:hover td { background: var(--surface-2); }
   async function buscarJson(path) {
     if (st.modo === 'demo') return null;
     const tentar = async (url) => {
-      const r = await fetch(url, { cache: 'no-cache', headers: { accept: 'application/json' } });
+      // sem resposta em 20 s, desiste deste arquivo e mantém a última leitura boa
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), TEMPO_LIMITE);
+      let r;
+      try { r = await fetch(url, { cache: 'no-cache', headers: { accept: 'application/json' }, signal: ctrl.signal }); }
+      catch (e) { if (e.name === 'AbortError') throw new Error('o TSE demorou demais para responder'); throw e; }
+      finally { clearTimeout(t); }
       if (r.status === 404 || r.status === 403) throw new Indisponivel(String(r.status));
+      if (r.status === 429) throw new Error('o TSE pediu para diminuir o ritmo (429)');
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
+      try { return await r.json(); } catch (e) { throw new Error('arquivo incompleto ou corrompido'); }
     };
     if (st.modo === 'proxy') return tentar(st.proxyBase + path);
     try {
@@ -292,7 +305,14 @@ tr.clicavel:hover td { background: var(--surface-2); }
       } else {
         bruto = await buscarJson(path);
       }
-      st.cache.set(path, { dados: N.normalizar(bruto), status: 'ok' });
+      const novo = N.normalizar(bruto);
+      const ant = st.cache.get(path);
+      if (!novo.cargo.codigo || !novo.candidatos.length) throw new Error('arquivo sem candidatos');
+      // Nós diferentes do CDN podem entregar uma versão mais velha por alguns segundos.
+      // Seções totalizadas nunca diminuem, então uma leitura que "volta no tempo" é descartada.
+      const velho = ant && ant.dados && !novo.final && (novo.secoes.totalizadas < ant.dados.secoes.totalizadas ||
+        (novo.geradoEm && ant.dados.geradoEm && novo.geradoEm < ant.dados.geradoEm));
+      st.cache.set(path, { dados: velho ? ant.dados : novo, status: 'ok' });
       st.algumSucesso = true;
       return 'ok';
     } catch (e) {
@@ -316,21 +336,34 @@ tr.clicavel:hover td { background: var(--surface-2); }
   async function atualizar() {
     if (st.carregando) return;
     st.carregando = true;
+    st.inicioCarga = Date.now();
     marcarEstado();
     const fila = alvos();
     const resultados = [];
     let i = 0;
     async function trabalhador() {
-      while (i < fila.length) {
+      while (i < fila.length && Date.now() - st.inicioCarga < PRAZO_CICLO) {
         const [abr, cargo] = fila[i++];
+        if (st.modo !== 'demo') {
+          const agora = Date.now(), vez = Math.max(agora, st.vez || 0);
+          st.vez = vez + ESPACO_MS;
+          if (vez > agora) await new Promise((r) => setTimeout(r, vez - agora));
+        }
         resultados.push(await carregar(abr, cargo));
+        // mostra o que já chegou, sem esperar o ciclo inteiro (no máximo uma vez a cada 1,5 s)
+        if (Date.now() - (st.ultimoRender || 0) > 1500) render();
       }
     }
     await Promise.all(Array.from({ length: CONCORRENCIA }, trabalhador));
     st.carregando = false;
     st.ultimo = new Date();
     st.falhaTotal = !st.algumSucesso && resultados.every((r) => r === 'erro');
-    st.proxima = Date.now() + (st.modo === 'demo' ? INTERVALO_DEMO : INTERVALO) * 1000;
+    // Se metade ou mais dos arquivos falhou, o TSE está sobrecarregado: espera mais antes de tentar de novo.
+    const erros = resultados.filter((r) => r === 'erro').length;
+    st.falhasSeguidas = erros * 2 >= resultados.length ? (st.falhasSeguidas || 0) + 1 : 0;
+    const base = st.modo === 'demo' ? INTERVALO_DEMO : Math.min(INTERVALO_MAX, INTERVALO * 2 ** st.falhasSeguidas);
+    // um pequeno sorteio evita que todos os visitantes peçam os arquivos no mesmo segundo
+    st.proxima = Date.now() + (base + (st.modo === 'demo' ? 0 : Math.random() * 8)) * 1000;
     marcarEstado();
     render();
   }
@@ -346,10 +379,12 @@ tr.clicavel:hover td { background: var(--surface-2); }
     else if (pres && pres.dados && pres.dados.secoes.totalizadas > 0) { pill.classList.add('vivo'); txt.textContent = 'Ao vivo'; }
     else if (st.algumSucesso) { txt.textContent = 'Aguardando apuração'; }
     else { txt.textContent = st.carregando ? 'Conectando' : 'Aguardando'; }
-    $('#atualizado').textContent = st.carregando ? 'Atualizando…' : st.ultimo ? 'Atualizado às ' + fmtHora(st.ultimo) : '';
+    $('#atualizado').textContent = st.carregando ? 'Atualizando…' : st.ultimo ? 'Atualizado às ' + fmtHora(st.ultimo) + (st.falhasSeguidas ? ' · TSE instável, tentando com menos frequência' : '') : '';
     $('#faixa-demo').hidden = st.modo !== 'demo';
   }
   setInterval(() => {
+    // trava de segurança: um ciclo nunca fica preso por mais de 90 s
+    if (st.carregando && Date.now() - st.inicioCarga > 90000) { st.carregando = false; st.proxima = Date.now(); }
     if (!st.proxima || st.carregando) { $('#contagem').textContent = ''; return; }
     const s = Math.max(0, Math.round((st.proxima - Date.now()) / 1000));
     $('#contagem').textContent = `próxima em ${s}s`;
@@ -445,6 +480,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
       if (termo) lista = lista.filter((c) => norm(`${c.nomeUrna} ${c.nome} ${c.partido} ${c.numero} ${c.composicao}`).includes(norm(termo)));
       const total = lista.length;
       const mostrar = st.expandido[chave] ? lista : lista.slice(0, LIMITE_LINHAS);
+      const posicao = new Map(d.candidatos.map((c, k) => [c, k + 1]));
       const eleitos = d.candidatos.filter((c) => c.situacao === 'eleito').length;
       const comVagas = d.agrupamentos.filter((a) => a.vagas > 0);
       const somaVagas = comVagas.reduce((s, a) => s + a.vagas, 0);
@@ -461,7 +497,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
         <div class="rolagem"><table>
           <thead><tr><th class="r">#</th><th>Candidato</th><th>Partido</th><th class="r">Votos</th><th class="r">%</th><th>Situação</th></tr></thead>
           <tbody>${mostrar.map((c) => `<tr>
-            <td class="r num">${d.candidatos.indexOf(c) + 1}</td>
+            <td class="r num">${posicao.get(c)}</td>
             <td><b>${esc(capital(c.nomeUrna))}</b> <span class="sub num">${esc(c.numero)}</span></td>
             <td><span class="lider"><span class="cor" style="background:${N.corPartido(c.partido)}"></span>${esc(c.partido)}</span></td>
             <td class="r num">${fmtInt(c.votos)}</td><td class="r num">${fmtPct(c.pct)}</td>
@@ -597,12 +633,19 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
 
   function render() {
+    st.ultimoRender = Date.now();
     renderNav();
     const ativo = document.activeElement;
     const foco = ativo && ativo.id ? { id: ativo.id, ini: ativo.selectionStart, fim: ativo.selectionEnd } : null;
     const main = $('#conteudo');
-    if (st.falhaTotal && st.modo !== 'demo') main.innerHTML = telaErro();
-    else main.innerHTML = st.vista === 'br' ? telaBrasil() : st.vista === 'zz' ? telaExterior() : telaUF(st.vista);
+    try {
+      if (st.falhaTotal && st.modo !== 'demo') main.innerHTML = telaErro();
+      else main.innerHTML = st.vista === 'br' ? telaBrasil() : st.vista === 'zz' ? telaExterior() : telaUF(st.vista);
+    } catch (e) {
+      // um dado inesperado nunca deve deixar a página em branco: mantém o que já estava na tela
+      console.error(e);
+      if (!main.innerHTML) main.innerHTML = '<div class="erro">Não foi possível montar esta tela. Ela será refeita na próxima atualização.</div>';
+    }
     if (foco) {
       const el = document.getElementById(foco.id);
       if (el) { el.focus(); try { el.setSelectionRange(foco.ini, foco.fim); } catch (e) { /* nem todo campo aceita */ } }
