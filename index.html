@@ -158,6 +158,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
 .filtro { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .filtro input { border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 6px 10px; min-width: 0; flex: 1 1 220px; max-width: 360px; }
 
+.regioes button { font-size: 14px; padding: 5px 14px; }
 .urnas { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 4px 18px; }
 .urna { display: grid; grid-template-columns: 64px minmax(0, 1fr) 62px; grid-template-rows: auto auto; align-items: center; gap: 0 10px; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 6px 2px; text-align: left; cursor: pointer; }
 .urna:hover { background: var(--surface-2); }
@@ -228,6 +229,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
     vista: 'br',
     mapaCargo: 1,
     urnasOrdem: 'mais',
+    regiao: '',                  // '' = todas; senão uma chave de REGIOES
     busca: {},
     listasMun: {},               // código da eleição -> { dados: {uf: [municípios]} }
     munSel: {},                  // uf -> código TSE do município aberto
@@ -576,15 +578,17 @@ tr.clicavel:hover td { background: var(--surface-2); }
       const [x, y] = GRADE[uf];
       const { d, lista } = lideres(uf, cargo);
       const c = lista[0];
+      const fora = st.regiao && !REGIOES[st.regiao].ufs.includes(uf);
       let estilo = '', rot = '';
-      if (c) {
+      if (c && !fora) {
         const cor = N.corPartido(c.partido);
         partidos.set(c.partido, (partidos.get(c.partido) || 0) + 1);
         const alfa = d.final ? 1 : 0.45 + 0.55 * d.secoes.pct / 100;
         estilo = `background:${cor};color:${textoClaro(cor)};opacity:${alfa.toFixed(2)}`;
         rot = `${N.NOME_UF[uf]}: ${capital(c.nomeUrna)} (${c.partido}) ${fmtPct(c.pct)}, ${fmtPct(d.secoes.pct)} apurado`;
-      } else rot = `${N.NOME_UF[uf]}: sem votos apurados`;
-      tiles.push(`<button class="tile" type="button" data-uf="${uf}" title="${esc(rot)}" aria-label="${esc(rot)}" style="grid-column:${x + 1};grid-row:${y + 1};${estilo}">${uf}${c ? `<span class="num">${Math.round(c.pct)}%</span>` : ''}</button>`);
+      } else rot = fora ? `${N.NOME_UF[uf]}: fora da região escolhida` : `${N.NOME_UF[uf]}: sem votos apurados`;
+      if (fora) estilo = 'opacity:.25';
+      tiles.push(`<button class="tile" type="button" data-uf="${uf}" title="${esc(rot)}" aria-label="${esc(rot)}" style="grid-column:${x + 1};grid-row:${y + 1};${estilo}">${uf}${c && !fora ? `<span class="num">${Math.round(c.pct)}%</span>` : ''}</button>`);
     }
     const leg = [...partidos.entries()].sort((a, b) => b[1] - a[1]);
     return `<section class="bloco" id="mapa">
@@ -617,7 +621,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
 
   function tabelaUFs() {
-    const linhas = UFS.map((uf) => {
+    const linhas = ufsDaRegiao().map((uf) => {
       const g = lideres(uf, 3, 2), s = lideres(uf, 5, 2), p = lideres(uf, 1);
       const pct = g.d ? g.d.secoes.pct : s.d ? s.d.secoes.pct : 0;
       return `<tr class="clicavel" data-uf="${uf}" tabindex="0">
@@ -629,10 +633,10 @@ tr.clicavel:hover td { background: var(--surface-2); }
         <td>${celulaLider(s.lista[1], s.d)}</td></tr>`;
     }).join('');
     return `<section class="bloco" id="estados">
-      <div class="bloco-topo"><div><h3>Os 27 estados</h3><h2>Governo e Senado por UF</h2></div></div>
+      <div class="bloco-topo"><div><h3>${st.regiao ? 'Região ' + esc(REGIOES[st.regiao].nome) : 'Os 27 estados'}</h3><h2>Governo e Senado por UF</h2></div></div>
       <div class="rolagem"><table class="tabela-uf">
         <thead><tr><th>UF</th><th>Apurado</th><th>Presidente na UF</th><th>Governador</th><th>Senado · 1ª vaga</th><th>Senado · 2ª vaga</th></tr></thead>
-        <tbody>${linhas}${linhaExterior()}</tbody></table></div></section>`;
+        <tbody>${linhas}${st.regiao ? '' : linhaExterior()}</tbody></table></div></section>`;
   }
 
   /* ---------- telas ---------- */
@@ -648,10 +652,64 @@ tr.clicavel:hover td { background: var(--surface-2); }
       <button class="btn" type="button" id="ir-demo">Ver demonstração com dados fictícios</button></div></div>`;
   }
 
+  /* ---------- regiões ---------- */
+  const REGIOES = {
+    norte: { nome: 'Norte', ufs: ['ac', 'am', 'ap', 'pa', 'ro', 'rr', 'to'] },
+    nordeste: { nome: 'Nordeste', ufs: ['al', 'ba', 'ce', 'ma', 'pb', 'pe', 'pi', 'rn', 'se'] },
+    'centro-oeste': { nome: 'Centro-Oeste', ufs: ['df', 'go', 'ms', 'mt'] },
+    sudeste: { nome: 'Sudeste', ufs: ['es', 'mg', 'rj', 'sp'] },
+    sul: { nome: 'Sul', ufs: ['pr', 'rs', 'sc'] },
+  };
+  const ufsDaRegiao = () => (st.regiao ? REGIOES[st.regiao].ufs : UFS);
+
+  function filtroRegiao() {
+    return `<div class="mapa-ctrl regioes" role="group" aria-label="Filtrar por região">
+      ${[['', 'Todas as regiões']].concat(Object.entries(REGIOES).map(([k, r]) => [k, r.nome])).map(([k, n]) =>
+        `<button type="button" data-regiao="${k}" aria-pressed="${st.regiao === k}">${n}</button>`).join('')}</div>`;
+  }
+
+  // Subtotal da região: soma os arquivos de presidente das UFs da região (os mesmos que o painel já baixa).
+  function blocoRegiao() {
+    if (!st.regiao) return '';
+    const r = REGIOES[st.regiao];
+    const porNumero = new Map();
+    let validos = 0, tot = 0, total = 0, comDados = 0;
+    for (const uf of r.ufs) {
+      const reg = dado(uf, 1);
+      const d = reg && reg.dados;
+      if (!d) continue;
+      comDados++;
+      validos += d.votos.validos; tot += d.secoes.totalizadas; total += d.secoes.total;
+      for (const c of d.candidatos) {
+        const x = porNumero.get(c.numero) || { ...c, votos: 0 };
+        x.votos += c.votos;
+        porNumero.set(c.numero, x);
+      }
+    }
+    const pct = total ? 100 * tot / total : 0;
+    const cands = [...porNumero.values()].sort((a, b) => b.votos - a.votos).slice(0, 5);
+    const max = Math.max(1, ...cands.map((c) => c.votos));
+    return `<section class="bloco" id="regiao">
+      <div class="bloco-topo"><div><h3>Região ${esc(r.nome)} · ${r.ufs.map((u) => u.toUpperCase()).join(', ')}</h3><h2>Presidente na região</h2></div>
+        <div class="apurado"><div class="apurado-lin"><span>Seções totalizadas</span><b class="num">${fmtPct(pct)}</b></div>
+          <div class="trilho"><i style="width:${pct}%"></i></div>
+          <div class="apurado-lin num"><span>${fmtInt(tot)} de ${fmtInt(total)}</span><span>${comDados} de ${r.ufs.length} UFs</span></div></div></div>
+      ${!comDados ? '<div class="vazio">Carregando…</div>' : !validos ? '<div class="aviso">A apuração ainda não começou nesta região.</div>' : `<div class="cands">${cands.map((c, k) => {
+        const p = 100 * c.votos / validos;
+        return `<div class="cand">
+          ${foto(c, 1, 'br')}
+          <div><div class="cand-nome">${esc(capital(c.nomeUrna))}${k === 0 ? ' <span class="selo vaga">Lidera na região</span>' : ''}</div><div class="cand-part">${esc(c.partido)} ${esc(c.numero)}</div></div>
+          <div class="cand-num num"><div class="cand-pct">${fmtPct(p)}</div><div class="cand-votos">${fmtInt(c.votos)} votos</div></div>
+          <div class="barra"><i style="width:${(100 * c.votos / max).toFixed(2)}%;background:${N.corPartido(c.partido)}"></i></div></div>`;
+      }).join('')}</div>
+      <div class="sub">Soma dos votos das ${r.ufs.length} UFs da região, calculada pelo painel a partir dos arquivos do TSE de cada estado.</div>`}
+    </section>`;
+  }
+
   // Percentual de seções (urnas) totalizadas em cada UF e no exterior. Usa os arquivos de presidente que o
   // painel já baixa, então não faz nenhum pedido a mais ao TSE.
   function blocoUrnas() {
-    const linhas = UFS.concat(['zz']).map((uf) => {
+    const linhas = (st.regiao ? ufsDaRegiao() : UFS.concat(['zz'])).map((uf) => {
       const reg = dado(uf, 1);
       const d = reg && reg.dados;
       return { uf, nome: N.NOME_UF[uf], pct: d ? d.secoes.pct : null, tot: d ? d.secoes.totalizadas : 0, total: d ? d.secoes.total : 0, final: d ? d.final : false };
@@ -661,14 +719,20 @@ tr.clicavel:hover td { background: var(--surface-2); }
       : ordem === 'menos' ? (a.pct ?? 101) - (b.pct ?? 101) || a.nome.localeCompare(b.nome, 'pt-BR')
       : (b.pct ?? -1) - (a.pct ?? -1) || a.nome.localeCompare(b.nome, 'pt-BR'));
     const br = dado('br', 1);
-    const nacional = br && br.dados ? br.dados.secoes : null;
+    let nacional = br && br.dados ? br.dados.secoes : null;
+    let rotulo = 'Brasil';
+    if (st.regiao) {
+      const tot = linhas.reduce((a, l) => a + l.tot, 0), total = linhas.reduce((a, l) => a + l.total, 0);
+      nacional = { totalizadas: tot, total, pct: total ? 100 * tot / total : 0 };
+      rotulo = REGIOES[st.regiao].nome;
+    }
     const completos = linhas.filter((l) => l.pct !== null && l.pct >= 100).length;
     return `<section class="bloco" id="urnas">
       <div class="bloco-topo"><div><h3>Seções totalizadas</h3><h2>Urnas apuradas por estado</h2></div>
         <div class="mapa-ctrl" role="group" aria-label="Ordem da lista">
           ${[['mais', 'Mais apurados'], ['menos', 'Menos apurados'], ['az', 'A–Z']].map(([k, n]) => `<button type="button" data-urnas="${k}" aria-pressed="${ordem === k}">${n}</button>`).join('')}
         </div></div>
-      ${nacional ? `<div class="sub num">Brasil: <b>${fmtPct(nacional.pct)}</b> das urnas apuradas (${fmtInt(nacional.totalizadas)} de ${fmtInt(nacional.total)} seções) · ${completos} de 28 com apuração completa</div>` : ''}
+      ${nacional ? `<div class="sub num">${rotulo}: <b>${fmtPct(nacional.pct)}</b> das urnas apuradas (${fmtInt(nacional.totalizadas)} de ${fmtInt(nacional.total)} seções) · ${completos} de ${linhas.length} com apuração completa</div>` : ''}
       <div class="urnas">${linhas.map((l) => `<button type="button" class="urna" data-uf="${l.uf}" title="${esc(l.nome)}: ${l.pct === null ? 'sem dados ainda' : fmtPct(l.pct) + ' apurado'}">
           <span class="urna-uf${l.uf === 'zz' ? ' longo' : ''}">${l.uf === 'zz' ? 'Exterior' : l.uf}</span>
           <span class="trilho"><i style="width:${l.pct || 0}%"></i></span>
@@ -681,7 +745,8 @@ tr.clicavel:hover td { background: var(--surface-2); }
 
   function telaBrasil() {
     return `<div class="titulo-pagina"><h1>Brasil</h1><span class="sub">Presidente, governadores e senadores dos 27 estados</span></div>
-      ${blocoMajoritario('br', 1, { grande: true, top: 4 })}
+      ${filtroRegiao()}
+      ${st.regiao ? blocoRegiao() : blocoMajoritario('br', 1, { grande: true, top: 4 })}
       ${blocoUrnas()}
       ${mapa()}
       ${tabelaUFs()}`;
@@ -807,10 +872,11 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
 
   document.addEventListener('click', (ev) => {
-    const t = ev.target.closest('[data-uf],[data-mun],[data-mapa],[data-urnas],[data-expandir],[data-pular],#btn-atualizar,#tentar,#ir-demo,#sair-demo');
+    const t = ev.target.closest('[data-uf],[data-mun],[data-mapa],[data-urnas],[data-regiao],[data-expandir],[data-pular],#btn-atualizar,#tentar,#ir-demo,#sair-demo');
     if (!t) return;
     if (t.dataset.uf) irPara(t.dataset.uf);
     else if (t.dataset.mun !== undefined) abrirMunicipio(t.dataset.mun);
+    else if (t.dataset.regiao !== undefined) { st.regiao = t.dataset.regiao; render(); }
     else if (t.dataset.urnas) { st.urnasOrdem = t.dataset.urnas; render(); }
     else if (t.dataset.mapa) { st.mapaCargo = Number(t.dataset.mapa); render(); }
     else if (t.dataset.expandir) { st.expandido[t.dataset.expandir] = !st.expandido[t.dataset.expandir]; render(); }
