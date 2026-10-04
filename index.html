@@ -158,6 +158,11 @@ tr.clicavel:hover td { background: var(--surface-2); }
 .filtro { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .filtro input { border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 6px 10px; min-width: 0; flex: 1 1 220px; max-width: 360px; }
 
+.mun-opcoes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { border: 1px solid var(--line); background: var(--surface-2); border-radius: 99px; padding: 4px 12px; cursor: pointer; font-weight: 600; font-size: 14px; }
+.chip:hover { border-color: var(--accent); }
+.chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.mun-escolhido { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; scroll-margin-top: 80px; }
 .painel-erro { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; display: grid; gap: 12px; max-width: 720px; }
 .painel-erro .acoes { display: flex; gap: 8px; flex-wrap: wrap; }
 .rodape { color: var(--muted); font-size: 13px; max-width: 1180px; margin: 0 auto; padding: 0 16px 32px; }
@@ -215,6 +220,9 @@ tr.clicavel:hover td { background: var(--surface-2); }
     vista: 'br',
     mapaCargo: 1,
     busca: {},
+    listasMun: {},               // código da eleição -> { dados: {uf: [municípios]} }
+    munSel: {},                  // uf -> código TSE do município aberto
+    munBusca: {},
     expandido: {},
     ultimo: null,
     proxima: 0,
@@ -239,7 +247,21 @@ tr.clicavel:hover td { background: var(--surface-2); }
     return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#111' : '#fff';
   }
   const eleicaoDe = (cargo) => st.eleicoes[N.CARGOS[cargo].pleito][1];
-  const caminho = (abr, cargo) => N.caminhoResultado(eleicaoDe(cargo), abr, cargo);
+  // Abrangência: "br", uma UF ("sp"), "zz" (exterior) ou um município dentro dela ("sp:71072", código do TSE).
+  const ufDe = (abr) => abr.split(':')[0];
+  const caminho = (abr, cargo) => {
+    const [uf, mun] = abr.split(':');
+    return mun ? N.caminhoResultadoMun(eleicaoDe(cargo), uf, mun, cargo) : N.caminhoResultado(eleicaoDe(cargo), uf, cargo);
+  };
+  const munInfo = (abr) => {
+    const [uf, cd] = abr.split(':');
+    const lista = listaMun(uf);
+    return cd ? ((lista && lista.find((m) => m.cd === cd)) || { cd, nm: 'Município ' + cd }) : null;
+  };
+  function nomeAbr(abr) {
+    const m = munInfo(abr);
+    return m ? `${capital(m.nm)} · ${ufDe(abr) === 'zz' ? 'Exterior' : ufDe(abr).toUpperCase()}` : N.NOME_UF[abr];
+  }
   const dado = (abr, cargo) => st.cache.get(caminho(abr, cargo));
 
   /* ---------- acesso ao TSE ---------- */
@@ -300,8 +322,8 @@ tr.clicavel:hover td { background: var(--surface-2); }
       let bruto;
       if (st.modo === 'demo') {
         // cada UF avança num ritmo um pouco diferente
-        const atraso = abr === 'br' ? 0 : (UFS.indexOf(abr) % 7) * 0.03;
-        bruto = N.gerarDemo(eleicaoDe(cargo), abr, cargo, Math.min(1, Math.max(0, progressoDemo() - atraso) * (1 + atraso)));
+        const atraso = abr === 'br' ? 0 : (Math.max(0, UFS.indexOf(ufDe(abr))) % 7) * 0.03;
+        bruto = N.gerarDemo(eleicaoDe(cargo), ufDe(abr), cargo, Math.min(1, Math.max(0, progressoDemo() - atraso) * (1 + atraso)), munInfo(abr));
       } else {
         bruto = await buscarJson(path);
       }
@@ -317,7 +339,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
       return 'ok';
     } catch (e) {
       const ant = st.cache.get(path);
-      if (e instanceof Indisponivel) { st.cache.set(path, { dados: ant && ant.dados, status: 'indisponivel' }); return 'indisponivel'; }
+      if (e instanceof Indisponivel) { st.cache.set(path, { dados: ant && ant.dados, status: 'indisponivel', em: Date.now() }); return 'indisponivel'; }
       st.cache.set(path, { dados: ant && ant.dados, status: 'erro', erro: e.message });
       return 'erro';
     }
@@ -328,8 +350,17 @@ tr.clicavel:hover td { background: var(--surface-2); }
     for (const uf of UFS) lista.push([uf, 1], [uf, 3], [uf, 5]);
     lista.push(['zz', 1]);
     if (UFS.includes(st.vista)) lista.push([st.vista, 6], [st.vista, N.cargoEstadual(st.vista)]);
+    // município escolhido na UF aberta. Arquivo que o TSE ainda não publicou é reconsultado só a cada 5 min
+    // (o TSE também bloqueia quem acumula pedidos de arquivos inexistentes).
+    const mun = st.munSel[st.vista];
+    if (mun) {
+      for (const c of cargosMun(st.vista)) {
+        const reg = dado(`${st.vista}:${mun}`, c);
+        if (!(reg && reg.status === 'indisponivel' && Date.now() - reg.em < 300000)) lista.push([`${st.vista}:${mun}`, c]);
+      }
+    }
     // a UF aberta vem primeiro, para aparecer mais rápido
-    if (st.vista !== 'br') lista.sort((a, b) => (b[0] === st.vista) - (a[0] === st.vista));
+    if (st.vista !== 'br') lista.sort((a, b) => (ufDe(b[0]) === st.vista) - (ufDe(a[0]) === st.vista));
     return lista;
   }
 
@@ -393,13 +424,17 @@ tr.clicavel:hover td { background: var(--surface-2); }
   document.addEventListener('visibilitychange', () => { if (!document.hidden && st.proxima && Date.now() > st.proxima) atualizar(); });
 
   /* ---------- componentes ---------- */
+  const fotosSemArquivo = new Set();
+  window.__fotoFalhou = (img) => { fotosSemArquivo.add(img.getAttribute('src')); const pai = img.parentNode; img.remove(); if (pai) pai.textContent = pai.dataset.ini || ''; };
   function foto(c, cargo, abr) {
     const cor = N.corPartido(c.partido);
     const ini = esc(iniciais(c.nomeUrna));
     if (st.modo === 'demo' || !c.sq) return `<div class="foto" style="background:${cor};color:${textoClaro(cor)}">${ini}</div>`;
     // a foto do presidenciável é a mesma em qualquer abrangência; a pasta "br" é a que o TSE sempre publica
-    const src = (st.modo === 'proxy' ? st.proxyBase : N.BASE) + N.caminhoFoto(eleicaoDe(cargo), cargo === 1 ? 'br' : abr, c.sq);
-    return `<div class="foto" style="background:${cor};color:${textoClaro(cor)}"><img loading="lazy" alt="" src="${esc(src)}" onerror="this.remove()">${''}</div>`;
+    const src = (st.modo === 'proxy' ? st.proxyBase : N.BASE) + N.caminhoFoto(eleicaoDe(cargo), cargo === 1 ? 'br' : ufDe(abr), c.sq);
+    // foto que falhou uma vez não é pedida de novo (o TSE bloqueia quem acumula pedidos de arquivos inexistentes)
+    if (fotosSemArquivo.has(src)) return `<div class="foto" style="background:${cor};color:${textoClaro(cor)}">${ini}</div>`;
+    return `<div class="foto" data-ini="${ini}" style="background:${cor};color:${textoClaro(cor)}"><img loading="lazy" alt="" src="${esc(src)}" onerror="window.__fotoFalhou(this)"></div>`;
   }
 
   function selo(c, cargo, pos, d) {
@@ -436,7 +471,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
   function blocoMajoritario(abr, cargo, opts = {}) {
     const reg = dado(abr, cargo);
     const nome = cargo === 5 ? 'Senador · 2 vagas' : N.CARGOS[cargo].nome;
-    const id = `${cargo === 1 ? 'presidente' : cargo === 3 ? 'governador' : 'senador'}`;
+    const id = (opts.prefixo || '') + `${cargo === 1 ? 'presidente' : cargo === 3 ? 'governador' : 'senador'}`;
     const aviso = situacaoArquivo(reg);
     let corpo = aviso;
     if (reg && reg.dados) {
@@ -462,14 +497,14 @@ tr.clicavel:hover td { background: var(--surface-2); }
         resumoVotos(d);
     }
     return `<section class="bloco" id="${id}">
-      <div class="bloco-topo"><div><h3>${esc(N.NOME_UF[abr])}</h3><h2>${esc(nome)}</h2></div>${reg && reg.dados ? apurado(reg.dados) : ''}</div>
+      <div class="bloco-topo"><div><h3>${esc(nomeAbr(abr))}</h3><h2>${esc(nome)}</h2></div>${reg && reg.dados ? apurado(reg.dados) : ''}</div>
       ${corpo}</section>`;
   }
 
-  function blocoProporcional(abr, cargo) {
+  function blocoProporcional(abr, cargo, opts = {}) {
     const reg = dado(abr, cargo);
     const nome = N.CARGOS[cargo].nome;
-    const id = cargo === 6 ? 'federal' : 'estadual';
+    const id = (opts.prefixo || '') + (cargo === 6 ? 'federal' : 'estadual');
     let corpo = situacaoArquivo(reg);
     if (reg && reg.dados) {
       const d = reg.dados;
@@ -492,7 +527,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
         (d.secoes.totalizadas === 0 && !d.final ? '<div class="aviso">A apuração ainda não começou. Os candidatos aparecem com votos zerados até a primeira totalização.</div>' : '') +
         `<div class="sub num">${d.cargo.vagas} vagas · ${fmtInt(d.candidatos.length)} candidatos · ${eleitos} eleitos informados pelo TSE${d.cargo.qe ? ' · quociente eleitoral ' + fmtInt(d.cargo.qe) : ''}</div>
         ${vagas}
-        <div class="filtro"><input type="search" id="busca-${abr}-${cargo}" data-busca="${chave}" placeholder="Buscar candidato, número ou partido" value="${esc(st.busca[chave] || '')}" aria-label="Buscar candidato">
+        <div class="filtro"><input type="search" id="busca-${abr.replace(':', '-')}-${cargo}" data-busca="${chave}" placeholder="Buscar candidato, número ou partido" value="${esc(st.busca[chave] || '')}" aria-label="Buscar candidato">
           <span class="sub num">${termo ? fmtInt(total) + ' encontrados' : ''}</span></div>
         <div class="rolagem"><table>
           <thead><tr><th class="r">#</th><th>Candidato</th><th>Partido</th><th class="r">Votos</th><th class="r">%</th><th>Situação</th></tr></thead>
@@ -507,7 +542,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
         ${resumoVotos(d)}`;
     }
     return `<section class="bloco" id="${id}">
-      <div class="bloco-topo"><div><h3>${esc(N.NOME_UF[abr])}</h3><h2>${esc(nome)}</h2></div>${reg && reg.dados ? apurado(reg.dados) : ''}</div>
+      <div class="bloco-topo"><div><h3>${esc(nomeAbr(abr))}</h3><h2>${esc(nome)}</h2></div>${reg && reg.dados ? apurado(reg.dados) : ''}</div>
       ${corpo}</section>`;
   }
 
@@ -611,19 +646,81 @@ tr.clicavel:hover td { background: var(--surface-2); }
       ${tabelaUFs()}`;
   }
 
+  /* ---------- municípios ---------- */
+  const cargosMun = (uf) => (uf === 'zz' ? [1] : [1, 3, 5, 6, N.cargoEstadual(uf)]);
+  // A lista de municípios vem de um arquivo do TSE por eleição (estadual para as UFs, federal para o exterior),
+  // baixado uma vez só, quando alguém abre uma UF.
+  function eleicaoMun(uf) { return uf === 'zz' ? st.eleicoes.federal[1] : st.eleicoes.estadual[1]; }
+  function listaMun(uf) {
+    if (st.modo === 'demo') { st.munDemo = st.munDemo || N.municipiosDemo(); return st.munDemo[uf] || []; }
+    const l = st.listasMun[eleicaoMun(uf)];
+    return l && l.dados ? l.dados[uf] || [] : null;
+  }
+  function garantirListaMun(uf) {
+    if (st.modo === 'demo') return;
+    const ele = eleicaoMun(uf);
+    const l = st.listasMun[ele];
+    if (l && (l.dados || l.carregando || Date.now() - l.em < 120000)) return;
+    st.listasMun[ele] = { carregando: true };
+    buscarJson(N.caminhoMunicipios(ele))
+      .then((j) => { st.listasMun[ele] = { dados: N.lerMunicipios(j), em: Date.now() }; })
+      .catch(() => { st.listasMun[ele] = { erro: true, em: Date.now() }; })
+      .then(render);
+  }
+  const semAcentoMin = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+  function blocoMunicipios(uf) {
+    garantirListaMun(uf);
+    const exterior = uf === 'zz';
+    const lista = listaMun(uf);
+    const sel = st.munSel[uf];
+    const termo = semAcentoMin(st.munBusca[uf] || '').trim();
+    let escolha = '';
+    if (lista === null) {
+      const l = st.listasMun[eleicaoMun(uf)];
+      escolha = l && l.erro ? '<div class="erro">Não consegui baixar a lista de municípios do TSE. Nova tentativa em instantes.</div>'
+        : '<div class="vazio">Carregando a lista de municípios…</div>';
+    } else if (!lista.length) {
+      escolha = '<div class="aviso">O TSE não publicou a lista de municípios desta UF.</div>';
+    } else {
+      const achados = termo ? lista.filter((m) => semAcentoMin(m.nm).includes(termo)) : lista.filter((m) => m.capital);
+      const mostrar = achados.slice(0, 12);
+      escolha = `<div class="filtro"><input type="search" id="mun-busca-${uf}" data-munbusca="${uf}" placeholder="${exterior ? 'Digite o nome da cidade' : 'Digite o nome do município'}" value="${esc(st.munBusca[uf] || '')}" aria-label="Buscar município" autocomplete="off">
+          <span class="sub num">${fmtInt(lista.length)} ${exterior ? 'cidades' : 'municípios'}</span></div>
+        ${mostrar.length ? `<div class="mun-opcoes">${mostrar.map((m) => `<button type="button" class="chip" data-mun="${uf}:${m.cd}" aria-pressed="${sel === m.cd}">${esc(capital(m.nm))}${m.capital ? ' <span class="sub">capital</span>' : ''}</button>`).join('')}${achados.length > mostrar.length ? `<span class="sub">e mais ${fmtInt(achados.length - mostrar.length)}; continue digitando</span>` : ''}</div>`
+          : termo ? '<div class="vazio">Nenhum município com esse nome.</div>' : ''}`;
+    }
+    let resultado = '';
+    if (sel) {
+      const abr = `${uf}:${sel}`;
+      const ce = N.cargoEstadual(uf);
+      resultado = `<div class="mun-escolhido"><h2>${esc(nomeAbr(abr))}</h2><button type="button" class="btn" data-mun="${uf}:">Fechar município</button></div>` +
+        (exterior ? blocoMajoritario(abr, 1, { grande: true, top: 6, prefixo: 'mun-' }) :
+          `<div class="grade-2">${blocoMajoritario(abr, 3, { grande: true, top: 6, prefixo: 'mun-' })}${blocoMajoritario(abr, 5, { grande: true, top: 6, prefixo: 'mun-' })}</div>
+          ${blocoMajoritario(abr, 1, { top: 4, prefixo: 'mun-' })}
+          ${blocoProporcional(abr, 6, { prefixo: 'mun-' })}
+          ${blocoProporcional(abr, ce, { prefixo: 'mun-' })}`);
+    }
+    return `<section class="bloco" id="municipios">
+      <div class="bloco-topo"><div><h3>${esc(N.NOME_UF[uf])}</h3><h2>${exterior ? 'Por cidade' : 'Por município'}</h2></div></div>
+      ${escolha}</section>${resultado}`;
+  }
+
   function telaExterior() {
     return `<div class="titulo-pagina"><h1>Exterior</h1><span class="sub">Brasileiros que votam fora do país. No exterior só há eleição para presidente.</span></div>
-      ${blocoMajoritario('zz', 1, { grande: true, top: 6 })}`;
+      ${blocoMajoritario('zz', 1, { grande: true, top: 6 })}
+      ${blocoMunicipios('zz')}`;
   }
 
   function telaUF(uf) {
     const ce = N.cargoEstadual(uf);
     return `<div class="titulo-pagina"><h1>${esc(N.NOME_UF[uf])}</h1>
-        <nav class="atalhos" aria-label="Cargos"><a href="#presidente" data-pular="presidente">Presidente</a><a href="#governador" data-pular="governador">Governador</a><a href="#senador" data-pular="senador">Senado</a><a href="#federal" data-pular="federal">Dep. Federal</a><a href="#estadual" data-pular="estadual">${ce === 8 ? 'Dep. Distrital' : 'Dep. Estadual'}</a></nav></div>
+        <nav class="atalhos" aria-label="Cargos"><a href="#presidente" data-pular="presidente">Presidente</a><a href="#governador" data-pular="governador">Governador</a><a href="#senador" data-pular="senador">Senado</a><a href="#federal" data-pular="federal">Dep. Federal</a><a href="#estadual" data-pular="estadual">${ce === 8 ? 'Dep. Distrital' : 'Dep. Estadual'}</a><a href="#municipios" data-pular="municipios">Municípios</a></nav></div>
       <div class="grade-2">${blocoMajoritario(uf, 3, { grande: true, top: 6 })}${blocoMajoritario(uf, 5, { grande: true, top: 6 })}</div>
       ${blocoMajoritario(uf, 1, { top: 4 })}
       ${blocoProporcional(uf, 6)}
-      ${blocoProporcional(uf, ce)}`;
+      ${blocoProporcional(uf, ce)}
+      ${blocoMunicipios(uf)}`;
   }
 
   function renderNav() {
@@ -661,6 +758,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
     if (rolar) window.scrollTo({ top: 0 });
     // os deputados da UF só são baixados quando a UF é aberta
     if (vista === 'zz' && !dado('zz', 1)) carregar('zz', 1).then(render);
+    if (vista !== 'br') garantirListaMun(vista);
     if (UFS.includes(vista)) {
       const faltam = [6, N.cargoEstadual(vista)].filter((c) => !dado(vista, c));
       if (faltam.length) Promise.all(faltam.map((c) => carregar(vista, c))).then(render);
@@ -668,23 +766,44 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
 
   document.addEventListener('click', (ev) => {
-    const t = ev.target.closest('[data-uf],[data-mapa],[data-expandir],[data-pular],#btn-atualizar,#tentar,#ir-demo,#sair-demo');
+    const t = ev.target.closest('[data-uf],[data-mun],[data-mapa],[data-expandir],[data-pular],#btn-atualizar,#tentar,#ir-demo,#sair-demo');
     if (!t) return;
     if (t.dataset.uf) irPara(t.dataset.uf);
+    else if (t.dataset.mun !== undefined) abrirMunicipio(t.dataset.mun);
     else if (t.dataset.mapa) { st.mapaCargo = Number(t.dataset.mapa); render(); }
     else if (t.dataset.expandir) { st.expandido[t.dataset.expandir] = !st.expandido[t.dataset.expandir]; render(); }
     else if (t.dataset.pular) { ev.preventDefault(); const el = document.getElementById(t.dataset.pular); if (el) el.scrollIntoView({ behavior: 'smooth' }); }
     else if (t.id === 'btn-atualizar' || t.id === 'tentar') atualizar();
     else if (t.id === 'ir-demo') iniciarDemo();
-    else if (t.id === 'sair-demo') { st.modo = 'direto'; st.cache.clear(); st.algumSucesso = false; st.falhaTotal = false; irPara(st.vista, false); descobrirEleicoes().then(atualizar); }
+    else if (t.id === 'sair-demo') { st.modo = 'direto'; st.cache.clear(); st.munSel = {}; st.algumSucesso = false; st.falhaTotal = false; irPara(st.vista, false); descobrirEleicoes().then(atualizar); }
   });
   document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && ev.target.dataset && ev.target.dataset.munbusca) {
+      ev.preventDefault();
+      clearTimeout(tBusca); render();
+      const primeiro = document.querySelector('.mun-opcoes [data-mun]');
+      if (primeiro) abrirMunicipio(primeiro.dataset.mun);
+      return;
+    }
     const tr = ev.target.closest && ev.target.closest('tr[data-uf]');
     if (tr && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); irPara(tr.dataset.uf); }
   });
+  function abrirMunicipio(valor) {
+    const [uf, cd] = valor.split(':');
+    if (!cd) { delete st.munSel[uf]; render(); return; }
+    st.munSel[uf] = cd;
+    st.munBusca[uf] = '';
+    render();
+    const el = document.getElementById('municipios');
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+    // baixa só os arquivos deste município, um de cada vez
+    (async () => { for (const c of cargosMun(uf)) { if (!dado(`${uf}:${cd}`, c)) { await carregar(`${uf}:${cd}`, c); render(); } } })();
+  }
   let tBusca;
   document.addEventListener('input', (ev) => {
-    const k = ev.target.dataset && ev.target.dataset.busca;
+    const ds = ev.target.dataset || {};
+    if (ds.munbusca) { st.munBusca[ds.munbusca] = ev.target.value; clearTimeout(tBusca); tBusca = setTimeout(render, 150); return; }
+    const k = ds.busca;
     if (!k) return;
     st.busca[k] = ev.target.value;
     clearTimeout(tBusca);
@@ -695,6 +814,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
     st.modo = 'demo';
     st.demoInicio = Date.now();
     st.cache.clear();
+    st.munSel = {};
     st.falhaTotal = false;
     $('#fonte-url').textContent = 'dados fictícios gerados no navegador';
     irPara(st.vista, false);

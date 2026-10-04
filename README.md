@@ -34,6 +34,7 @@ https://resultados.tse.jus.br/oficial/ele2026/{eleição}/dados/{uf}/{uf}-c{carg
 ```
 
 - Eleições do 1º turno: 6257 (federal: presidente) e 6259 (estadual: governador, senador e deputados). A página confirma os códigos no índice `oficial/comum/config/ele-c.json` ao abrir.
+- Municípios: `…/{eleição}/dados/{uf}/{uf}{município}-c{cargo}-e{eleição}-u.json`, com o código de 5 dígitos do TSE. A lista de municípios de cada UF vem de `…/{eleição}/config/mun-e{eleição}-cm.json` (estadual para as UFs, federal para as cidades do exterior) e é baixada uma vez. Só o município escolhido é baixado e atualizado (5 arquivos por minuto a mais).
 - Cargos: 1 presidente, 3 governador, 5 senador (um arquivo com as 2 vagas), 6 dep. federal, 7 dep. estadual, 8 dep. distrital (DF).
 - Atualização automática a cada 60 s (o CDN do TSE renova os arquivos mais ou menos a cada minuto). O limite do TSE é 100 requisições por segundo por IP; o painel faz no máximo 6 ao mesmo tempo.
 - A visão Brasil baixa 82 arquivos pequenos (presidente nacional e por UF, governador e senador das 27 UFs). Os arquivos de deputados, que são grandes, só são baixados para a UF aberta.

@@ -48,6 +48,26 @@
   function caminhoResultado(eleicao, abr, cargo) {
     return `/${CICLO}/${eleicao}/dados/${abr}/${abr}-c${pad(cargo, 4)}-e${pad(eleicao, 6)}-u.json`;
   }
+  // Resultado de um município: o código é o do TSE (5 dígitos), não o do IBGE.
+  function caminhoResultadoMun(eleicao, uf, cdmun, cargo) {
+    return `/${CICLO}/${eleicao}/dados/${uf}/${uf}${pad(cdmun, 5)}-c${pad(cargo, 4)}-e${pad(eleicao, 6)}-u.json`;
+  }
+  // Lista de municípios (e cidades do exterior) por UF, publicada antes da eleição.
+  function caminhoMunicipios(eleicao) {
+    return `/${CICLO}/${eleicao}/config/mun-e${pad(eleicao, 6)}-cm.json`;
+  }
+  function lerMunicipios(json) {
+    const r = {};
+    for (const abr of (json && json.abr) || []) {
+      const uf = String(abr.cd || '').toLowerCase();
+      if (!uf) continue;
+      r[uf] = (abr.mu || [])
+        .map((m) => ({ cd: String(m.cd), nm: m.nm || '', capital: /^s$/i.test(String(m.c || '')) }))
+        .filter((m) => m.cd && m.nm)
+        .sort((a, b) => a.nm.localeCompare(b.nm, 'pt-BR'));
+    }
+    return r;
+  }
   function caminhoFoto(eleicao, abr, sqcand) {
     return `/${CICLO}/${eleicao}/fotos/${abr}/${sqcand}.jpeg`;
   }
@@ -210,19 +230,36 @@
   function aleatorio(seed) { let a = seed; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
   const br = (n, casas = 2) => n.toFixed(casas).replace('.', ',');
 
+  // Municípios fictícios para a demonstração (o primeiro é a "capital").
+  function municipiosDemo() {
+    const r = {};
+    const nomes = ['Vila Exemplo', 'Campo Fictício', 'Serra do Teste', 'Porto Imaginário', 'São Simulado', 'Lagoa Modelo',
+      'Ribeirão Hipotético', 'Nova Ilustração'];
+    for (const [uf] of UFS.concat([['zz']])) {
+      const rnd = aleatorio(semente('mun-' + uf));
+      const total = uf === 'df' ? 1 : nomes.length;
+      r[uf] = Array.from({ length: total }, (_, i) => ({
+        cd: String(90000 + i * 7 + UFS.findIndex((u) => u[0] === uf)), nm: uf === 'df' ? 'Distrito Exemplo' : nomes[i],
+        capital: i === 0, eleitorado: (i === 0 ? 0.25 : 0.03 + rnd() * 0.05) * (ELEITORADO[uf] || 0.5) * 1e6,
+      })).sort((a, b) => a.nm.localeCompare(b.nm, 'pt-BR'));
+    }
+    return r;
+  }
+
   // Gera um arquivo no MESMO formato do TSE, para que a demonstração passe pelo mesmo leitor.
   // `progresso` vai de 0 a 1 (fração das seções totalizadas).
-  function gerarDemo(eleicao, abr, cargo, progresso) {
-    const rnd = aleatorio(semente(`${abr}-${cargo}`));
+  function gerarDemo(eleicao, abr, cargo, progresso, mun) {
+    const rnd = aleatorio(semente(`${abr}-${cargo}${mun ? '-' + mun.cd : ''}`));
     const ufs = abr === 'br' ? UFS.map((u) => u[0]) : [abr];
-    const eleitorado = Math.round(ufs.reduce((s, u) => s + ELEITORADO[u], 0) * 1e6);
+    const eleitorado = mun ? Math.round(mun.eleitorado) : Math.round(ufs.reduce((s, u) => s + ELEITORADO[u], 0) * 1e6);
     const secoesTotal = Math.round(eleitorado / 330);
     const p = Math.max(0, Math.min(1, progresso));
     const final = p >= 1;
     const nv = cargo === 5 ? 2 : cargo === 6 ? vagasFederal(abr) : cargo === 7 || cargo === 8 ? vagasEstadual(abr) : 1;
     const nCand = cargo === 1 ? 7 : cargo === 3 ? 5 : cargo === 5 ? 7 : Math.min(nv * 3, 120);
     // presidente: mesmos candidatos em todas as abrangências, com força regional diferente
-    const rndCand = cargo === 1 ? aleatorio(semente('pres')) : rnd;
+    // presidente: mesmos candidatos em todo lugar; nos municípios, os candidatos da UF
+    const rndCand = cargo === 1 ? aleatorio(semente('pres')) : mun ? aleatorio(semente(`${abr}-${cargo}`)) : rnd;
     const cands = [];
     for (let i = 0; i < nCand; i++) {
       const partido = PARTIDOS_DEMO[cargo === 1 ? i % PARTIDOS_DEMO.length : Math.floor(rndCand() * PARTIDOS_DEMO.length)];
@@ -263,7 +300,7 @@
     const hg = `${pad(agora.getUTCHours(), 2)}:${pad(agora.getUTCMinutes(), 2)}:${pad(agora.getUTCSeconds(), 2)}`;
     const st = Math.round(secoesTotal * p);
     return {
-      ele: eleicao, t: '1', cdabr: abr, dg, hg, tf: final ? 's' : 'n', md: 'n',
+      ele: eleicao, t: '1', cdabr: mun ? abr + mun.cd : abr, dg, hg, tf: final ? 's' : 'n', md: 'n',
       carg: [{ cd: String(cargo), nmn: CARGOS[cargo].nome, nv: String(nv), agr }],
       s: { ts: String(secoesTotal), st: String(st), pst: br(100 * p) },
       e: { te: String(eleitorado), c: String(comparecimento), pc: br(eleitorado ? 100 * comparecimento / eleitorado : 0),
@@ -275,6 +312,7 @@
 
   const Nucleo = {
     BASE, CICLO, ELEICOES_PADRAO, UFS, NOME_UF, CARGOS, cargoEstadual, caminhoResultado, caminhoFoto, lerIndice,
+    caminhoResultadoMun, caminhoMunicipios, lerMunicipios, municipiosDemo,
     normalizar, classificarSituacao, corPartido, gerarDemo, PARTIDOS_DEMO,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Nucleo;
