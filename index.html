@@ -306,7 +306,8 @@ tr.clicavel:hover td { background: var(--surface-2); }
   function alvos() {
     const lista = [[ 'br', 1 ]];
     for (const uf of UFS) lista.push([uf, 1], [uf, 3], [uf, 5]);
-    if (st.vista !== 'br') lista.push([st.vista, 6], [st.vista, N.cargoEstadual(st.vista)]);
+    lista.push(['zz', 1]);
+    if (UFS.includes(st.vista)) lista.push([st.vista, 6], [st.vista, N.cargoEstadual(st.vista)]);
     // a UF aberta vem primeiro, para aparecer mais rápido
     if (st.vista !== 'br') lista.sort((a, b) => (b[0] === st.vista) - (a[0] === st.vista));
     return lista;
@@ -361,7 +362,8 @@ tr.clicavel:hover td { background: var(--surface-2); }
     const cor = N.corPartido(c.partido);
     const ini = esc(iniciais(c.nomeUrna));
     if (st.modo === 'demo' || !c.sq) return `<div class="foto" style="background:${cor};color:${textoClaro(cor)}">${ini}</div>`;
-    const src = (st.modo === 'proxy' ? st.proxyBase : N.BASE) + N.caminhoFoto(eleicaoDe(cargo), abr, c.sq);
+    // a foto do presidenciável é a mesma em qualquer abrangência; a pasta "br" é a que o TSE sempre publica
+    const src = (st.modo === 'proxy' ? st.proxyBase : N.BASE) + N.caminhoFoto(eleicaoDe(cargo), cargo === 1 ? 'br' : abr, c.sq);
     return `<div class="foto" style="background:${cor};color:${textoClaro(cor)}"><img loading="lazy" alt="" src="${esc(src)}" onerror="this.remove()">${''}</div>`;
   }
 
@@ -524,6 +526,16 @@ tr.clicavel:hover td { background: var(--surface-2); }
     return `<span class="lider"><span class="cor" style="background:${N.corPartido(c.partido)}"></span><span><b>${esc(capital(c.nomeUrna))}</b> <span class="sub">${esc(c.partido)}</span> <span class="num">${fmtPct(c.pct)}</span>${c.situacao === 'eleito' ? ' <span class="selo eleito">Eleito</span>' : c.situacao === 'segundo-turno' ? ' <span class="selo segundo">2º turno</span>' : ''}</span></span>`;
   }
 
+  function linhaExterior() {
+    const p = lideres('zz', 1);
+    const pct = p.d ? p.d.secoes.pct : 0;
+    return `<tr class="clicavel" data-uf="zz" tabindex="0">
+      <td>Exterior</td>
+      <td class="num"><span class="mini-trilho"><i style="width:${pct}%"></i></span>${fmtPct(pct)}</td>
+      <td>${celulaLider(p.lista[0], p.d)}</td>
+      <td colspan="3"><span class="sub">Fora do país só se vota para presidente</span></td></tr>`;
+  }
+
   function tabelaUFs() {
     const linhas = UFS.map((uf) => {
       const g = lideres(uf, 3, 2), s = lideres(uf, 5, 2), p = lideres(uf, 1);
@@ -540,7 +552,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
       <div class="bloco-topo"><div><h3>Os 27 estados</h3><h2>Governo e Senado por UF</h2></div></div>
       <div class="rolagem"><table class="tabela-uf">
         <thead><tr><th>UF</th><th>Apurado</th><th>Presidente na UF</th><th>Governador</th><th>Senado · 1ª vaga</th><th>Senado · 2ª vaga</th></tr></thead>
-        <tbody>${linhas}</tbody></table></div></section>`;
+        <tbody>${linhas}${linhaExterior()}</tbody></table></div></section>`;
   }
 
   /* ---------- telas ---------- */
@@ -563,6 +575,11 @@ tr.clicavel:hover td { background: var(--surface-2); }
       ${tabelaUFs()}`;
   }
 
+  function telaExterior() {
+    return `<div class="titulo-pagina"><h1>Exterior</h1><span class="sub">Brasileiros que votam fora do país. No exterior só há eleição para presidente.</span></div>
+      ${blocoMajoritario('zz', 1, { grande: true, top: 6 })}`;
+  }
+
   function telaUF(uf) {
     const ce = N.cargoEstadual(uf);
     return `<div class="titulo-pagina"><h1>${esc(N.NOME_UF[uf])}</h1>
@@ -575,7 +592,8 @@ tr.clicavel:hover td { background: var(--surface-2); }
 
   function renderNav() {
     $('#nav').innerHTML = `<button type="button" class="br" data-uf="br" aria-current="${st.vista === 'br'}">Brasil</button>` +
-      UFS.map((uf) => `<button type="button" data-uf="${uf}" aria-current="${st.vista === uf}" title="${esc(N.NOME_UF[uf])}">${uf}</button>`).join('');
+      UFS.map((uf) => `<button type="button" data-uf="${uf}" aria-current="${st.vista === uf}" title="${esc(N.NOME_UF[uf])}">${uf}</button>`).join('') +
+      `<button type="button" class="br" data-uf="zz" aria-current="${st.vista === 'zz'}">Exterior</button>`;
   }
 
   function render() {
@@ -584,7 +602,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
     const foco = ativo && ativo.id ? { id: ativo.id, ini: ativo.selectionStart, fim: ativo.selectionEnd } : null;
     const main = $('#conteudo');
     if (st.falhaTotal && st.modo !== 'demo') main.innerHTML = telaErro();
-    else main.innerHTML = st.vista === 'br' ? telaBrasil() : telaUF(st.vista);
+    else main.innerHTML = st.vista === 'br' ? telaBrasil() : st.vista === 'zz' ? telaExterior() : telaUF(st.vista);
     if (foco) {
       const el = document.getElementById(foco.id);
       if (el) { el.focus(); try { el.setSelectionRange(foco.ini, foco.fim); } catch (e) { /* nem todo campo aceita */ } }
@@ -599,7 +617,8 @@ tr.clicavel:hover td { background: var(--surface-2); }
     render();
     if (rolar) window.scrollTo({ top: 0 });
     // os deputados da UF só são baixados quando a UF é aberta
-    if (vista !== 'br') {
+    if (vista === 'zz' && !dado('zz', 1)) carregar('zz', 1).then(render);
+    if (UFS.includes(vista)) {
       const faltam = [6, N.cargoEstadual(vista)].filter((c) => !dado(vista, c));
       if (faltam.length) Promise.all(faltam.map((c) => carregar(vista, c))).then(render);
     }
@@ -642,7 +661,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
   /* ---------- início ---------- */
   const h = location.hash.replace('#', '').toLowerCase();
   const m = /^(demo)?-?([a-z]{2})?$/.exec(h);
-  if (m && m[2] && UFS.includes(m[2])) st.vista = m[2];
+  if (m && m[2] && (UFS.includes(m[2]) || m[2] === 'zz')) st.vista = m[2];
   renderNav();
   render();
   if (m && m[1]) iniciarDemo();

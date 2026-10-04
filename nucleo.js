@@ -190,7 +190,7 @@
   // Eleitorado aproximado por UF (milhões) e vagas na Câmara. Só alimenta a simulação.
   const ELEITORADO = { ac: .6, al: 2.4, am: 2.7, ap: .55, ba: 11.3, ce: 7, df: 2.2, es: 2.9, go: 4.8, ma: 5, mg: 16.4,
     ms: 2, mt: 2.5, pa: 6.2, pb: 3.1, pe: 7.1, pi: 2.6, pr: 8.6, rj: 12.8, rn: 2.6, ro: 1.3, rr: .37, rs: 8.6, sc: 5.6,
-    se: 1.7, sp: 34.1, to: 1.1 };
+    se: 1.7, sp: 34.1, to: 1.1, zz: .7 };
   const VAGAS_FED = { sp: 70, mg: 53, rj: 46, ba: 39, rs: 31, pr: 30, pe: 25, ce: 22, ma: 18, go: 17, pa: 17, sc: 16,
     pb: 12, es: 10, pi: 10, al: 9 };
   const vagasFederal = (uf) => VAGAS_FED[uf] || 8;
