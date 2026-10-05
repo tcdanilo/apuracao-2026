@@ -158,6 +158,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
 .filtro { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .filtro input { border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 6px 10px; min-width: 0; flex: 1 1 220px; max-width: 360px; }
 
+.chip[aria-pressed="true"] .sub { color: inherit; opacity: .75; }
 .regioes button { font-size: 14px; padding: 5px 14px; }
 .urnas { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 4px 18px; }
 .urna { display: grid; grid-template-columns: 64px minmax(0, 1fr) 62px; grid-template-rows: auto auto; align-items: center; gap: 0 10px; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 6px 2px; text-align: left; cursor: pointer; }
@@ -234,6 +235,8 @@ tr.clicavel:hover td { background: var(--surface-2); }
     listasMun: {},               // código da eleição -> { dados: {uf: [municípios]} }
     munSel: {},                  // uf -> código TSE do município aberto
     munBusca: {},
+    paisSel: '',                 // exterior: ISO do país aberto
+    paisBusca: '',
     expandido: {},
     ultimo: null,
     proxima: 0,
@@ -370,6 +373,13 @@ tr.clicavel:hover td { background: var(--surface-2); }
         if (!(reg && reg.status === 'indisponivel' && Date.now() - reg.em < 300000)) lista.push([`${st.vista}:${mun}`, c]);
       }
     }
+    // exterior: todas as cidades do país escolhido (o resultado do país é a soma delas)
+    if (st.vista === 'zz' && st.paisSel) {
+      for (const m of cidadesDoPais(st.paisSel)) {
+        const reg = dado(`zz:${m.cd}`, 1);
+        if (!(reg && reg.status === 'indisponivel' && Date.now() - reg.em < 300000)) lista.push([`zz:${m.cd}`, 1]);
+      }
+    }
     // a UF aberta vem primeiro, para aparecer mais rápido
     if (st.vista !== 'br') lista.sort((a, b) => (ufDe(b[0]) === st.vista) - (ufDe(a[0]) === st.vista));
     return lista;
@@ -480,7 +490,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
 
   function blocoMajoritario(abr, cargo, opts = {}) {
-    const reg = dado(abr, cargo);
+    const reg = opts.reg || dado(abr, cargo);
     const nome = cargo === 5 ? 'Senador · 2 vagas' : N.CARGOS[cargo].nome;
     const id = (opts.prefixo || '') + `${cargo === 1 ? 'presidente' : cargo === 3 ? 'governador' : 'senador'}`;
     const aviso = situacaoArquivo(reg);
@@ -508,8 +518,8 @@ tr.clicavel:hover td { background: var(--surface-2); }
         resumoVotos(d);
     }
     return `<section class="bloco" id="${id}">
-      <div class="bloco-topo"><div><h3>${esc(nomeAbr(abr))}</h3><h2>${esc(nome)}</h2></div>${reg && reg.dados ? apurado(reg.dados) : ''}</div>
-      ${corpo}</section>`;
+      <div class="bloco-topo"><div><h3>${esc(opts.titulo || nomeAbr(abr))}</h3><h2>${esc(nome)}</h2></div>${reg && reg.dados ? apurado(reg.dados) : ''}</div>
+      ${corpo}${opts.rodape || ''}</section>`;
   }
 
   function blocoProporcional(abr, cargo, opts = {}) {
@@ -812,10 +822,75 @@ tr.clicavel:hover td { background: var(--surface-2); }
       ${escolha}</section>${resultado}`;
   }
 
+  /* ---------- exterior por país ---------- */
+  // O TSE publica o exterior por cidade; o resultado de um país é a soma das cidades dele.
+  function paises() { const l = listaMun('zz'); return l ? N.paisesExterior(l) : null; }
+  function cidadesDoPais(iso) { const p = (paises() || []).find((x) => x.iso === iso); return p ? p.cidades : []; }
+  const PAISES_DESTAQUE = ['US', 'PT', 'JP', 'GB', 'IT', 'DE', 'ES', 'FR', 'CA', 'PY', 'CH', 'AR'];
+
+  function blocoPaises() {
+    garantirListaMun('zz');
+    const lista = paises();
+    const termo = semAcentoMin(st.paisBusca).trim();
+    let escolha;
+    if (lista === null) {
+      const l = st.listasMun[eleicaoMun('zz')];
+      escolha = l && l.erro ? '<div class="erro">Não consegui baixar a lista de cidades do exterior do TSE. Nova tentativa em instantes.</div>'
+        : '<div class="vazio">Carregando a lista de países…</div>';
+    } else if (!lista.length) {
+      escolha = '<div class="aviso">O TSE não publicou a lista de cidades do exterior.</div>';
+    } else {
+      const achados = termo ? lista.filter((p) => semAcentoMin(p.nome).includes(termo) || p.cidades.some((m) => semAcentoMin(m.nm).includes(termo)))
+        : PAISES_DESTAQUE.map((iso) => lista.find((p) => p.iso === iso)).filter(Boolean);
+      const mostrar = achados.slice(0, 16);
+      escolha = `<div class="filtro"><input type="search" id="pais-busca" data-paisbusca="1" placeholder="Digite o país (ou uma cidade)" value="${esc(st.paisBusca)}" aria-label="Buscar país" autocomplete="off">
+          <span class="sub num">${fmtInt(lista.filter((p) => p.iso !== 'XX').length)} países · ${fmtInt(lista.reduce((a, p) => a + p.cidades.length, 0))} cidades</span></div>
+        ${mostrar.length ? `<div class="mun-opcoes">${termo ? '' : '<span class="sub">Mais procurados:</span>'}${mostrar.map((p) => `<button type="button" class="chip" data-pais="${p.iso}" aria-pressed="${st.paisSel === p.iso}">${esc(p.nome)}${p.cidades.length > 1 ? ` <span class="sub">${p.cidades.length} cidades</span>` : ''}</button>`).join('')}${achados.length > mostrar.length ? `<span class="sub">e mais ${fmtInt(achados.length - mostrar.length)}; continue digitando</span>` : ''}</div>`
+          : '<div class="vazio">Nenhum país com esse nome.</div>'}`;
+    }
+    return `<section class="bloco" id="municipios">
+      <div class="bloco-topo"><div><h3>Exterior</h3><h2>Por país</h2></div></div>
+      ${escolha}</section>${resultadoPais()}`;
+  }
+
+  function resultadoPais() {
+    const iso = st.paisSel;
+    const p = iso && (paises() || []).find((x) => x.iso === iso);
+    if (!p) return '';
+    const regs = p.cidades.map((m) => ({ m, reg: dado(`zz:${m.cd}`, 1) }));
+    const com = regs.filter((x) => x.reg && x.reg.dados);
+    const soma = N.somarResultados(com.map((x) => x.reg.dados));
+    let reg;
+    if (soma) reg = { dados: soma, status: regs.some((x) => x.reg && x.reg.status === 'erro') ? 'erro' : 'ok' };
+    else if (regs.every((x) => x.reg)) reg = (regs.find((x) => x.reg.status === 'erro') || regs[0]).reg;
+    const faltam = p.cidades.length - com.length;
+    const nota = (p.cidades.length > 1 ? `Soma das ${p.cidades.length} cidades com voto no país, calculada pelo painel a partir dos arquivos do TSE de cada cidade.` : '') +
+      (faltam && soma ? ` Ainda sem dados de ${faltam} ${faltam > 1 ? 'cidades' : 'cidade'}.` : '');
+    const tabela = p.cidades.length > 1 ? `<div class="rolagem"><table><thead><tr><th>Cidade</th><th class="r">Seções</th><th>Lidera</th><th class="r">Votos válidos</th></tr></thead><tbody>${
+      regs.map(({ m, reg: r }) => {
+        const d = r && r.dados;
+        const c = d && d.votos.validos ? d.candidatos[0] : null;
+        return `<tr><td>${esc(capital(m.nm))}</td><td class="r num">${d ? fmtPct(d.secoes.pct) : r && r.status === 'indisponivel' ? 'não publicado' : '–'}</td>
+          <td>${c ? `<span class="lider"><i class="cor" style="background:${N.corPartido(c.partido)}"></i>${esc(capital(c.nomeUrna))} · ${fmtPct(c.pct)}</span>` : '–'}</td><td class="r num">${d ? fmtInt(d.votos.validos) : '–'}</td></tr>`;
+      }).join('')}</tbody></table></div>` : '';
+    return `<div class="mun-escolhido"><h2>${esc(p.nome)}</h2><button type="button" class="btn" data-pais="">Fechar país</button></div>` +
+      blocoMajoritario('zz:pais', 1, { grande: true, top: 6, prefixo: 'pais-', reg, titulo: `${p.nome} · Exterior`, rodape: (nota ? `<div class="sub">${nota}</div>` : '') + tabela });
+  }
+  function abrirPais(iso) {
+    st.paisSel = iso;
+    st.paisBusca = '';
+    render();
+    if (!iso) return;
+    const el = document.getElementById('municipios');
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+    // baixa as cidades do país uma de cada vez
+    (async () => { for (const m of cidadesDoPais(iso)) { if (st.paisSel !== iso) return; if (!dado(`zz:${m.cd}`, 1)) { await carregar(`zz:${m.cd}`, 1); render(); } } })();
+  }
+
   function telaExterior() {
     return `<div class="titulo-pagina"><h1>Exterior</h1><span class="sub">Brasileiros que votam fora do país. No exterior só há eleição para presidente.</span></div>
       ${blocoMajoritario('zz', 1, { grande: true, top: 6 })}
-      ${blocoMunicipios('zz')}`;
+      ${blocoPaises()}`;
   }
 
   function telaUF(uf) {
@@ -872,10 +947,11 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
 
   document.addEventListener('click', (ev) => {
-    const t = ev.target.closest('[data-uf],[data-mun],[data-mapa],[data-urnas],[data-regiao],[data-expandir],[data-pular],#btn-atualizar,#tentar,#ir-demo,#sair-demo');
+    const t = ev.target.closest('[data-uf],[data-mun],[data-pais],[data-mapa],[data-urnas],[data-regiao],[data-expandir],[data-pular],#btn-atualizar,#tentar,#ir-demo,#sair-demo');
     if (!t) return;
     if (t.dataset.uf) irPara(t.dataset.uf);
     else if (t.dataset.mun !== undefined) abrirMunicipio(t.dataset.mun);
+    else if (t.dataset.pais !== undefined) abrirPais(t.dataset.pais);
     else if (t.dataset.regiao !== undefined) { st.regiao = t.dataset.regiao; render(); }
     else if (t.dataset.urnas) { st.urnasOrdem = t.dataset.urnas; render(); }
     else if (t.dataset.mapa) { st.mapaCargo = Number(t.dataset.mapa); render(); }
@@ -883,9 +959,16 @@ tr.clicavel:hover td { background: var(--surface-2); }
     else if (t.dataset.pular) { ev.preventDefault(); const el = document.getElementById(t.dataset.pular); if (el) el.scrollIntoView({ behavior: 'smooth' }); }
     else if (t.id === 'btn-atualizar' || t.id === 'tentar') atualizar();
     else if (t.id === 'ir-demo') iniciarDemo();
-    else if (t.id === 'sair-demo') { st.modo = 'direto'; st.cache.clear(); st.munSel = {}; st.algumSucesso = false; st.falhaTotal = false; irPara(st.vista, false); descobrirEleicoes().then(atualizar); }
+    else if (t.id === 'sair-demo') { st.modo = 'direto'; st.cache.clear(); st.munSel = {}; st.paisSel = ''; st.algumSucesso = false; st.falhaTotal = false; irPara(st.vista, false); descobrirEleicoes().then(atualizar); }
   });
   document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && ev.target.dataset && ev.target.dataset.paisbusca) {
+      ev.preventDefault();
+      clearTimeout(tBusca); render();
+      const primeiro = document.querySelector('.mun-opcoes [data-pais]');
+      if (primeiro) abrirPais(primeiro.dataset.pais);
+      return;
+    }
     if (ev.key === 'Enter' && ev.target.dataset && ev.target.dataset.munbusca) {
       ev.preventDefault();
       clearTimeout(tBusca); render();
@@ -911,6 +994,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
   document.addEventListener('input', (ev) => {
     const ds = ev.target.dataset || {};
     if (ds.munbusca) { st.munBusca[ds.munbusca] = ev.target.value; clearTimeout(tBusca); tBusca = setTimeout(render, 150); return; }
+    if (ds.paisbusca) { st.paisBusca = ev.target.value; clearTimeout(tBusca); tBusca = setTimeout(render, 150); return; }
     const k = ds.busca;
     if (!k) return;
     st.busca[k] = ev.target.value;
@@ -922,7 +1006,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
     st.modo = 'demo';
     st.demoInicio = Date.now();
     st.cache.clear();
-    st.munSel = {};
+    st.munSel = {}; st.paisSel = '';
     st.falhaTotal = false;
     $('#fonte-url').textContent = 'dados fictícios gerados no navegador';
     irPara(st.vista, false);
