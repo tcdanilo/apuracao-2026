@@ -468,8 +468,10 @@
     const secoesTotal = Math.round(eleitorado / 330);
     const p = Math.max(0, Math.min(1, progresso));
     const final = p >= 1;
+    // 2º turno: só os dois mais votados do 1º turno
+    const t2 = String(eleicao) === ELEICOES_PADRAO.federal[2] || String(eleicao) === ELEICOES_PADRAO.estadual[2];
     const nv = cargo === 5 ? 2 : cargo === 6 ? vagasFederal(abr) : cargo === 7 || cargo === 8 ? vagasEstadual(abr) : 1;
-    const nCand = cargo === 1 ? 7 : cargo === 3 ? 5 : cargo === 5 ? 7 : Math.min(nv * 3, 120);
+    const nCand = t2 ? 2 : cargo === 1 ? 7 : cargo === 3 ? 5 : cargo === 5 ? 7 : Math.min(nv * 3, 120);
     // presidente: mesmos candidatos em todas as abrangências, com força regional diferente
     // presidente: mesmos candidatos em todo lugar; nos municípios, os candidatos da UF
     const rndCand = cargo === 1 ? aleatorio(semente('pres')) : mun ? aleatorio(semente(`${abr}-${cargo}`)) : rnd;
@@ -491,7 +493,7 @@
     const ordenados = [...cands].sort((a, b) => b.votos - a.votos);
     if (final) {
       if (cargo === 1 || cargo === 3) {
-        if (ordenados[0].votos > validos / 2) ordenados[0].st = 'Eleito';
+        if (t2 || ordenados[0].votos > validos / 2) ordenados[0].st = 'Eleito';
         else { ordenados[0].st = '2º turno'; ordenados[1].st = '2º turno'; }
         ordenados.slice(ordenados[0].st === 'Eleito' ? 1 : 2).forEach((c) => { c.st = 'Não eleito'; });
       } else {
@@ -513,7 +515,7 @@
     const hg = `${pad(agora.getUTCHours(), 2)}:${pad(agora.getUTCMinutes(), 2)}:${pad(agora.getUTCSeconds(), 2)}`;
     const st = Math.round(secoesTotal * p);
     return {
-      ele: eleicao, t: '1', cdabr: mun ? abr + mun.cd : abr, dg, hg, tf: final ? 's' : 'n', md: 'n',
+      ele: eleicao, t: t2 ? '2' : '1', cdabr: mun ? abr + mun.cd : abr, dg, hg, tf: final ? 's' : 'n', md: 'n',
       carg: [{ cd: String(cargo), nmn: CARGOS[cargo].nome, nv: String(nv), agr }],
       s: { ts: String(secoesTotal), st: String(st), pst: br(100 * p) },
       e: { te: String(eleitorado), c: String(comparecimento), pc: br(eleitorado ? 100 * comparecimento / eleitorado : 0),

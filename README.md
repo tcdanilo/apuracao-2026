@@ -40,6 +40,13 @@ https://resultados.tse.jus.br/oficial/ele2026/{eleição}/dados/{uf}/{uf}-c{carg
 - Atualização automática a cada 60 s (o CDN do TSE renova os arquivos mais ou menos a cada minuto). O limite do TSE é 100 requisições por segundo por IP; o painel faz no máximo 6 ao mesmo tempo.
 - A visão Brasil baixa 82 arquivos pequenos (presidente nacional e por UF, governador e senador das 27 UFs). Os arquivos de deputados, que são grandes, só são baixados para a UF aberta.
 
+## 2º turno (25 de outubro)
+
+- O endereço normal mostra o 2º turno (eleições 6258 federal e 6260 estadual). O 1º turno continua em `?turno=1` (link "ver 1º turno" no topo).
+- Quem disputa o 2º turno sai do resultado final do 1º turno: o painel lê uma vez o arquivo de presidente do Brasil e os de governador das 27 UFs e só pede ao TSE os arquivos de governador das UFs que têm 2º turno. Se presidente foi decidido no 1º turno, a página mostra o eleito e não pede os arquivos de presidente.
+- São uns 40 arquivos por ciclo em vez de 88, então o painel atualiza a cada 30 s, sem passar dos pedidos por minuto do 1º turno.
+- "Estimativa do painel": cada UF entra com o peso que terá com 100% das seções apuradas (votos válidos ÷ fração de seções totalizadas), o que corrige o efeito de estados que apuram mais rápido. É um cálculo do painel, não um resultado oficial.
+
 ## O que o painel mostra e o que não mostra
 
 - Percentuais são sobre votos válidos, como no app oficial. A barra de progresso é de seções totalizadas.

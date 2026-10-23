@@ -53,6 +53,9 @@ button, select, input { font: inherit; color: inherit; }
 .topo { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; background: var(--fg); color: var(--bg); }
 .topo-in { max-width: 1180px; margin: 0 auto; padding: 10px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
 .marca { font: 700 24px/1 var(--font-display); letter-spacing: .01em; text-transform: uppercase; display: flex; align-items: baseline; gap: 10px; }
+.troca-turno { font: 600 13px/1 var(--font-display); letter-spacing: .06em; color: inherit; opacity: .8; text-decoration: underline; text-underline-offset: 3px; }
+.projecao { border-left: 4px solid var(--accent); }
+.projecao .cand-pct { font-size: 26px; }
 .marca small { font: 600 14px/1 var(--font-display); letter-spacing: .08em; opacity: .7; }
 .estado { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; font: 600 13px/1.4 var(--font-display); letter-spacing: .08em; text-transform: uppercase; background: rgba(127,127,127,.25); }
@@ -184,7 +187,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
 <body>
 <header class="topo">
   <div class="topo-in">
-    <div class="marca">Apuração 2026 <small>1º turno · 4 de outubro</small></div>
+    <div class="marca">Apuração 2026 <small id="turno-txt">2º turno · 25 de outubro</small> <a id="troca-turno" class="troca-turno" href="?turno=1">ver 1º turno</a></div>
     <div class="estado">
       <span id="pill" class="pill"><span class="ponto"></span><span id="pill-txt">Conectando</span></span>
       <span id="atualizado" class="num"></span>
@@ -198,7 +201,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
 <main id="conteudo"></main>
 <footer class="rodape">
   Fonte: arquivos públicos de divulgação de resultados do TSE (<span id="fonte-url">resultados.tse.jus.br</span>), eleições <span id="cod-eleicoes">6257 e 6259</span>.
-  Percentuais sobre votos válidos. O painel não faz projeções: "Eleito" e "2º turno" aparecem quando o TSE os informa.
+  Percentuais sobre votos válidos. "Eleito" e "2º turno" aparecem quando o TSE os informa. A "estimativa do painel" é um cálculo nosso, não um resultado oficial.
   Nos cargos ainda em apuração, "lidera" indica apenas a posição parcial.
 </footer>
 
@@ -209,6 +212,9 @@ tr.clicavel:hover td { background: var(--surface-2); }
   const N = window.Nucleo;
   const UFS = N.UFS.map((u) => u[0]);
   const INTERVALO = 60;          // segundos entre atualizações (o CDN do TSE renova a cada ~1 min)
+  // No 2º turno o painel lê menos da metade dos arquivos (só presidente e governador), então pode
+  // atualizar duas vezes por minuto fazendo menos pedidos ao TSE do que fazia no 1º turno.
+  const INTERVALO_2T = 30;
   const INTERVALO_DEMO = 8;
   const TEMPO_LIMITE = 15000;    // ms por arquivo
   const PRAZO_CICLO = 45000;     // depois disso o ciclo não começa novos downloads (o resto fica com a última leitura)
@@ -224,6 +230,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
 
   const st = {
     modo: 'direto',              // direto | proxy | demo
+    turno: new URLSearchParams(location.search).get('turno') === '1' ? 1 : 2,
     proxyBase: 'tse',
     eleicoes: { ...N.ELEICOES_PADRAO },
     cache: new Map(),            // caminho -> { dados, status: 'ok'|'indisponivel'|'erro', erro }
@@ -260,12 +267,12 @@ tr.clicavel:hover td { background: var(--surface-2); }
     const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
     return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#111' : '#fff';
   }
-  const eleicaoDe = (cargo) => st.eleicoes[N.CARGOS[cargo].pleito][1];
+  const eleicaoDe = (cargo, turno = st.turno) => st.eleicoes[N.CARGOS[cargo].pleito][turno];
   // Abrangência: "br", uma UF ("sp"), "zz" (exterior) ou um município dentro dela ("sp:71072", código do TSE).
   const ufDe = (abr) => abr.split(':')[0];
-  const caminho = (abr, cargo) => {
+  const caminho = (abr, cargo, turno = st.turno) => {
     const [uf, mun] = abr.split(':');
-    return mun ? N.caminhoResultadoMun(eleicaoDe(cargo), uf, mun, cargo) : N.caminhoResultado(eleicaoDe(cargo), uf, cargo);
+    return mun ? N.caminhoResultadoMun(eleicaoDe(cargo, turno), uf, mun, cargo) : N.caminhoResultado(eleicaoDe(cargo, turno), uf, cargo);
   };
   const munInfo = (abr) => {
     const [uf, cd] = abr.split(':');
@@ -276,7 +283,31 @@ tr.clicavel:hover td { background: var(--surface-2); }
     const m = munInfo(abr);
     return m ? `${capital(m.nm)} · ${ufDe(abr) === 'zz' ? 'Exterior' : ufDe(abr).toUpperCase()}` : N.NOME_UF[abr];
   }
-  const dado = (abr, cargo) => st.cache.get(caminho(abr, cargo));
+  const dado = (abr, cargo, turno = st.turno) => st.cache.get(caminho(abr, cargo, turno));
+
+  /* ---------- 2º turno ---------- */
+  // Quem disputa o 2º turno vem do resultado do 1º: o TSE marca os dois mais votados com "2º turno".
+  // Assim o painel só pede os arquivos de governador das UFs que têm 2º turno (pedir arquivos que não
+  // existem faz o TSE bloquear o visitante).
+  const segundo = () => st.turno === 2;
+  function teve2t(abr, cargo) {
+    const reg = dado(abr, cargo, 1);
+    const d = reg && reg.dados;
+    if (!d) return null;                                               // ainda não sabemos
+    if (d.candidatos.some((c) => c.situacao === 'segundo-turno')) return true;
+    if (d.candidatos.some((c) => c.situacao === 'eleito')) return false;
+    return null;
+  }
+  const pres2t = () => !segundo() || teve2t('br', 1) !== false;
+  const gov2t = (uf) => !segundo() || teve2t(uf, 3) !== false;
+  const eleito1t = (abr, cargo) => { const r = dado(abr, cargo, 1); return r && r.dados ? r.dados.candidatos.find((c) => c.situacao === 'eleito') : null; };
+  function avisoSem2t(abr, cargo) {
+    const c = eleito1t(abr, cargo);
+    const onde = abr === 'br' ? 'Brasil' : N.NOME_UF[abr];
+    return `<section class="bloco" id="${cargo === 1 ? 'presidente' : 'governador'}">
+      <div class="bloco-topo"><div><h3>${esc(onde)}</h3><h2>${esc(N.CARGOS[cargo].nome)}</h2></div></div>
+      <div class="aviso">Não há 2º turno ${cargo === 1 ? 'para presidente' : 'para governador nesta UF'}${c ? `: <b>${esc(capital(c.nomeUrna))}</b> (${esc(c.partido)}) foi eleito no 1º turno com ${fmtPct(c.pct)} dos votos válidos` : ''}. <a href="?turno=1${abr === 'br' ? '' : '#' + abr}">Ver o 1º turno</a></div></section>`;
+  }
 
   /* ---------- acesso ao TSE ---------- */
   class Indisponivel extends Error {}
@@ -322,7 +353,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
       const r = N.lerIndice(idx);
       if (r) st.eleicoes = r;
     } catch (e) { /* mantém os códigos padrão */ }
-    $('#cod-eleicoes').textContent = `${st.eleicoes.federal[1]} (federal) e ${st.eleicoes.estadual[1]} (estadual)`;
+    $('#cod-eleicoes').textContent = `${st.eleicoes.federal[st.turno]} (federal) e ${st.eleicoes.estadual[st.turno]} (estadual)`;
   }
 
   function progressoDemo() {
@@ -330,14 +361,15 @@ tr.clicavel:hover td { background: var(--surface-2); }
     return Math.min(1, 0.15 + min / 6);    // completa a apuração em ~5 minutos
   }
 
-  async function carregar(abr, cargo) {
-    const path = caminho(abr, cargo);
+  async function carregar(abr, cargo, turno = st.turno) {
+    const path = caminho(abr, cargo, turno);
     try {
       let bruto;
       if (st.modo === 'demo') {
         // cada UF avança num ritmo um pouco diferente
         const atraso = abr === 'br' ? 0 : (Math.max(0, UFS.indexOf(ufDe(abr))) % 7) * 0.03;
-        bruto = N.gerarDemo(eleicaoDe(cargo), ufDe(abr), cargo, Math.min(1, Math.max(0, progressoDemo() - atraso) * (1 + atraso)), munInfo(abr));
+        const prog = turno < st.turno ? 1 : Math.min(1, Math.max(0, progressoDemo() - atraso) * (1 + atraso));
+        bruto = N.gerarDemo(eleicaoDe(cargo, turno), ufDe(abr), cargo, prog, munInfo(abr));
       } else {
         bruto = await buscarJson(path);
       }
@@ -359,7 +391,10 @@ tr.clicavel:hover td { background: var(--surface-2); }
     }
   }
 
+  // arquivo que o TSE ainda não publicou é reconsultado só a cada 5 min
+  const esperar404 = (abr, cargo, turno) => { const r = dado(abr, cargo, turno); return r && r.status === 'indisponivel' && Date.now() - r.em < 300000; };
   function alvos() {
+    if (segundo()) return alvos2t();
     const lista = [[ 'br', 1 ]];
     for (const uf of UFS) lista.push([uf, 1], [uf, 3], [uf, 5]);
     lista.push(['zz', 1]);
@@ -384,36 +419,63 @@ tr.clicavel:hover td { background: var(--surface-2); }
     if (st.vista !== 'br') lista.sort((a, b) => (ufDe(b[0]) === st.vista) - (ufDe(a[0]) === st.vista));
     return lista;
   }
+  function alvos2t() {
+    const lista = [];
+    const add = (abr, cargo, turno = 2) => { if (!esperar404(abr, cargo, turno)) lista.push([abr, cargo, turno]); };
+    // resultado final do 1º turno (presidente e governadores): lido uma vez só, não muda mais
+    if (!(dado('br', 1, 1) || {}).dados) add('br', 1, 1);
+    for (const uf of UFS) if (!(dado(uf, 3, 1) || {}).dados) add(uf, 3, 1);
+    // um cargo só entra depois que o arquivo do 1º turno dele foi lido (ou falhou): assim não pedimos
+    // ao TSE arquivos de 2º turno que não existem
+    const lido = (abr, cargo) => !!dado(abr, cargo, 1);
+    if (lido('br', 1) && pres2t()) { add('br', 1); for (const uf of UFS) add(uf, 1); add('zz', 1); }
+    for (const uf of UFS) if (lido(uf, 3) && gov2t(uf)) add(uf, 3);
+    const mun = st.munSel[st.vista];
+    if (mun) for (const c of cargosMun(st.vista)) add(`${st.vista}:${mun}`, c);
+    if (st.vista === 'zz' && st.paisSel && pres2t()) for (const m of cidadesDoPais(st.paisSel)) add(`zz:${m.cd}`, 1);
+    // primeiro o 1º turno (diz o que baixar), depois o presidente no Brasil, depois a UF aberta
+    const peso = ([abr, , turno]) => (turno === 1 ? 0 : abr === 'br' ? 1 : ufDe(abr) === st.vista ? 2 : 3);
+    return lista.sort((a, b) => peso(a) - peso(b));
+  }
 
   async function atualizar() {
     if (st.carregando) return;
     st.carregando = true;
     st.inicioCarga = Date.now();
     marcarEstado();
-    const fila = alvos();
+    let fila = alvos();
     const resultados = [];
     let i = 0;
     async function trabalhador() {
       while (i < fila.length && Date.now() - st.inicioCarga < PRAZO_CICLO) {
-        const [abr, cargo] = fila[i++];
+        const [abr, cargo, turno] = fila[i++];
         if (st.modo !== 'demo') {
           const agora = Date.now(), vez = Math.max(agora, st.vez || 0);
           st.vez = vez + ESPACO_MS;
           if (vez > agora) await new Promise((r) => setTimeout(r, vez - agora));
         }
-        resultados.push(await carregar(abr, cargo));
+        resultados.push(await carregar(abr, cargo, turno));
         // mostra o que já chegou, sem esperar o ciclo inteiro (no máximo uma vez a cada 1,5 s)
         if (Date.now() - (st.ultimoRender || 0) > 1500) render();
       }
     }
     await Promise.all(Array.from({ length: CONCORRENCIA }, trabalhador));
+    // 2º turno: se este ciclo leu o 1º turno, agora já se sabe quais arquivos do 2º turno pedir
+    if (fila.some((a) => a[2] === 1)) {
+      const feitos = new Set(fila.map((a) => a.join('|')));
+      fila = alvos().filter((a) => !feitos.has(a.join('|')));
+      i = 0;
+      await Promise.all(Array.from({ length: CONCORRENCIA }, trabalhador));
+    }
     st.carregando = false;
     st.ultimo = new Date();
     st.falhaTotal = !st.algumSucesso && resultados.every((r) => r === 'erro');
     // Se metade ou mais dos arquivos falhou, o TSE está sobrecarregado: espera mais antes de tentar de novo.
     const erros = resultados.filter((r) => r === 'erro').length;
     st.falhasSeguidas = erros * 2 >= resultados.length ? (st.falhasSeguidas || 0) + 1 : 0;
-    const base = st.modo === 'demo' ? INTERVALO_DEMO : Math.min(INTERVALO_MAX, INTERVALO * 2 ** st.falhasSeguidas);
+    // nunca mais pedidos por minuto que no 1º turno (88 arquivos por minuto na visão Brasil)
+    const intervalo = segundo() ? Math.max(INTERVALO_2T, Math.ceil(fila.length * 60 / 88)) : INTERVALO;
+    const base = st.modo === 'demo' ? INTERVALO_DEMO : Math.min(INTERVALO_MAX, intervalo * 2 ** st.falhasSeguidas);
     // um pequeno sorteio evita que todos os visitantes peçam os arquivos no mesmo segundo
     st.proxima = Date.now() + (base + (st.modo === 'demo' ? 0 : Math.random() * 8)) * 1000;
     marcarEstado();
@@ -424,7 +486,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
   function marcarEstado() {
     const pill = $('#pill'), txt = $('#pill-txt');
     pill.className = 'pill';
-    const pres = dado('br', 1);
+    const pres = pres2t() ? dado('br', 1) : dado(UFS.find((uf) => gov2t(uf)) || 'sp', 3);
     if (st.modo === 'demo') { pill.classList.add('demo'); txt.textContent = 'Demonstração'; }
     else if (st.falhaTotal) { txt.textContent = 'Sem conexão'; }
     else if (pres && pres.dados && pres.dados.final) { txt.textContent = 'Totalizado'; }
@@ -581,6 +643,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
 
   function mapa() {
+    if (segundo() && (st.mapaCargo === 5 || (st.mapaCargo === 1 && !pres2t()))) st.mapaCargo = pres2t() ? 1 : 3;
     const cargo = st.mapaCargo;
     const tiles = [];
     const partidos = new Map();
@@ -588,7 +651,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
       const [x, y] = GRADE[uf];
       const { d, lista } = lideres(uf, cargo);
       const c = lista[0];
-      const fora = st.regiao && !REGIOES[st.regiao].ufs.includes(uf);
+      const fora = (st.regiao && !REGIOES[st.regiao].ufs.includes(uf)) || (segundo() && cargo === 3 && !gov2t(uf));
       let estilo = '', rot = '';
       if (c && !fora) {
         const cor = N.corPartido(c.partido);
@@ -596,7 +659,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
         const alfa = d.final ? 1 : 0.45 + 0.55 * d.secoes.pct / 100;
         estilo = `background:${cor};color:${textoClaro(cor)};opacity:${alfa.toFixed(2)}`;
         rot = `${N.NOME_UF[uf]}: ${capital(c.nomeUrna)} (${c.partido}) ${fmtPct(c.pct)}, ${fmtPct(d.secoes.pct)} apurado`;
-      } else rot = fora ? `${N.NOME_UF[uf]}: fora da região escolhida` : `${N.NOME_UF[uf]}: sem votos apurados`;
+      } else rot = fora ? `${N.NOME_UF[uf]}: ${st.regiao && !REGIOES[st.regiao].ufs.includes(uf) ? 'fora da região escolhida' : 'sem 2º turno para governador'}` : `${N.NOME_UF[uf]}: sem votos apurados`;
       if (fora) estilo = 'opacity:.25';
       tiles.push(`<button class="tile" type="button" data-uf="${uf}" title="${esc(rot)}" aria-label="${esc(rot)}" style="grid-column:${x + 1};grid-row:${y + 1};${estilo}">${uf}${c && !fora ? `<span class="num">${Math.round(c.pct)}%</span>` : ''}</button>`);
     }
@@ -604,12 +667,12 @@ tr.clicavel:hover td { background: var(--surface-2); }
     return `<section class="bloco" id="mapa">
       <div class="bloco-topo"><div><h3>Quem lidera em cada estado</h3><h2>Mapa da apuração</h2></div>
         <div class="mapa-ctrl" role="group" aria-label="Cargo do mapa">
-          ${[[1, 'Presidente'], [3, 'Governador'], [5, 'Senado']].map(([c, n]) => `<button type="button" data-mapa="${c}" aria-pressed="${st.mapaCargo === c}">${n}</button>`).join('')}
+          ${(segundo() ? [[1, 'Presidente'], [3, 'Governador']].filter(([c]) => c === 3 || pres2t()) : [[1, 'Presidente'], [3, 'Governador'], [5, 'Senado']]).map(([c, n]) => `<button type="button" data-mapa="${c}" aria-pressed="${st.mapaCargo === c}">${n}</button>`).join('')}
         </div></div>
       <div class="mapa-wrap">
         <div class="mapa">${tiles.join('')}</div>
         <div style="display:grid;gap:10px;min-width:0">
-          <div class="sub">Cor do partido de quem lidera. Quanto mais clara, menos seções foram totalizadas. Toque num estado para ver todos os cargos.</div>
+          <div class="sub">Cor do partido de quem lidera. Quanto mais clara, menos seções foram totalizadas.${segundo() && cargo === 3 ? ' Estados apagados não têm 2º turno para governador.' : ''} Toque num estado para ver todos os cargos.</div>
           ${leg.length ? `<div class="legenda">${leg.map(([p, n]) => `<span><i style="background:${N.corPartido(p)}"></i>${esc(p)} <b class="num">${n}</b> ${n === 1 ? 'estado' : 'estados'}</span>`).join('')}</div>` : '<div class="vazio">Nenhum voto apurado ainda.</div>'}
         </div>
       </div></section>`;
@@ -630,7 +693,30 @@ tr.clicavel:hover td { background: var(--surface-2); }
       <td colspan="3"><span class="sub">Fora do país só se vota para presidente</span></td></tr>`;
   }
 
+  function tabelaUFs2t() {
+    const linhas = ufsDaRegiao().map((uf) => {
+      const p = lideres(uf, 1), g = lideres(uf, 3);
+      const base = pres2t() ? p.d : g.d;
+      const pct = base ? base.secoes.pct : 0;
+      const e1 = eleito1t(uf, 3);
+      return `<tr class="clicavel" data-uf="${uf}" tabindex="0">
+        <td>${uf}</td>
+        <td class="num"><span class="mini-trilho"><i style="width:${pct}%"></i></span>${fmtPct(pct)}</td>
+        ${pres2t() ? `<td>${celulaLider(p.lista[0], p.d)}</td>` : ''}
+        <td>${gov2t(uf) ? celulaLider(g.lista[0], g.d) : `<span class="sub">Sem 2º turno${e1 ? ` · ${esc(capital(e1.nomeUrna))} (${esc(e1.partido)}) eleito no 1º turno` : ''}</span>`}</td></tr>`;
+    }).join('');
+    const ext = lideres('zz', 1);
+    return `<section class="bloco" id="estados">
+      <div class="bloco-topo"><div><h3>${st.regiao ? 'Região ' + esc(REGIOES[st.regiao].nome) : 'Os 27 estados'}</h3><h2>Quem lidera em cada UF</h2></div></div>
+      <div class="rolagem"><table class="tabela-uf">
+        <thead><tr><th>UF</th><th>Apurado</th>${pres2t() ? '<th>Presidente na UF</th>' : ''}<th>Governador · 2º turno</th></tr></thead>
+        <tbody>${linhas}${st.regiao || !pres2t() ? '' : `<tr class="clicavel" data-uf="zz" tabindex="0"><td>Exterior</td>
+          <td class="num"><span class="mini-trilho"><i style="width:${ext.d ? ext.d.secoes.pct : 0}%"></i></span>${fmtPct(ext.d ? ext.d.secoes.pct : 0)}</td>
+          <td>${celulaLider(ext.lista[0], ext.d)}</td><td><span class="sub">Fora do país só se vota para presidente</span></td></tr>`}</tbody></table></div></section>`;
+  }
+
   function tabelaUFs() {
+    if (segundo()) return tabelaUFs2t();
     const linhas = ufsDaRegiao().map((uf) => {
       const g = lideres(uf, 3, 2), s = lideres(uf, 5, 2), p = lideres(uf, 1);
       const pct = g.d ? g.d.secoes.pct : s.d ? s.d.secoes.pct : 0;
@@ -716,6 +802,56 @@ tr.clicavel:hover td { background: var(--surface-2); }
     </section>`;
   }
 
+  // Estimativa do painel para o resultado final de presidente. O número oficial soma os votos já apurados,
+  // e os estados não apuram no mesmo ritmo: se um estado grande está mais adiantado, ele "pesa" mais na
+  // parcial do que vai pesar no fim. Aqui cada UF entra com os votos que deve ter quando 100% das suas
+  // seções estiverem totalizadas (votos válidos ÷ fração de seções apuradas). UFs sem nenhuma seção
+  // apurada ficam de fora. Não usa nenhum arquivo a mais: são os mesmos arquivos por UF já baixados.
+  function estimativaPresidente() {
+    const br = dado('br', 1);
+    if (!br || !br.dados || br.dados.final || !br.dados.secoes.totalizadas) return null;
+    const porNumero = new Map();
+    let total = 0, eleitCoberto = 0, eleitTotal = 0, ufs = 0;
+    for (const uf of UFS.concat(['zz'])) {
+      const r = dado(uf, 1);
+      const d = r && r.dados;
+      if (!d) continue;
+      eleitTotal += d.eleitorado.total;
+      if (!d.secoes.totalizadas || !d.votos.validos || !d.secoes.total) continue;
+      const fator = d.final ? 1 : d.secoes.total / d.secoes.totalizadas;
+      eleitCoberto += d.eleitorado.total; ufs++;
+      total += d.votos.validos * fator;
+      for (const c of d.candidatos) {
+        const x = porNumero.get(c.numero) || { c, v: 0 };
+        x.v += c.votos * fator;
+        porNumero.set(c.numero, x);
+      }
+    }
+    if (!total || ufs < 2) return null;
+    const cands = [...porNumero.values()].map((x) => ({ ...x.c, est: 100 * x.v / total, atual: (br.dados.candidatos.find((c) => c.numero === x.c.numero) || {}).pct || 0 }))
+      .sort((a, b) => b.est - a.est);
+    return { cands, ufs, cobertura: eleitTotal ? 100 * eleitCoberto / eleitTotal : 0, apurado: br.dados.secoes.pct };
+  }
+
+  function blocoProjecao() {
+    const e = estimativaPresidente();
+    if (!e) return '';
+    const lista = e.cands.slice(0, segundo() ? 2 : 4);
+    const max = Math.max(1, ...lista.map((c) => c.est));
+    return `<section class="bloco projecao" id="estimativa">
+      <div class="bloco-topo"><div><h3>Estimativa do painel · não é resultado oficial</h3><h2>Se cada estado mantiver o ritmo atual</h2></div></div>
+      <div class="cands">${lista.map((c) => {
+        const dif = c.est - c.atual;
+        return `<div class="cand">
+          ${foto(c, 1, 'br')}
+          <div><div class="cand-nome">${esc(capital(c.nomeUrna))}</div><div class="cand-part">${esc(c.partido)} ${esc(c.numero)} · parcial oficial ${fmtPct(c.atual)}</div></div>
+          <div class="cand-num num"><div class="cand-pct">${fmtPct(c.est)}</div><div class="cand-votos">${dif >= 0 ? '+' : '−'}${fmtPct(Math.abs(dif)).replace('%', '')} ponto${Math.abs(dif) >= 0.995 && Math.abs(dif) < 1.005 ? '' : 's'} sobre a parcial</div></div>
+          <div class="barra"><i style="width:${(100 * c.est / max).toFixed(2)}%;background:${N.corPartido(c.partido)}"></i></div></div>`;
+      }).join('')}</div>
+      <div class="sub">Com ${fmtPct(e.apurado)} das urnas apuradas no país, os estados não estão no mesmo ponto da contagem. Aqui cada estado pesa o que vai pesar com 100% das urnas apuradas, mantendo o resultado que já mostra. Considera ${e.ufs} de 28 abrangências (${fmtPct(e.cobertura)} do eleitorado); as que ainda não começaram ficam de fora. Dentro de cada estado as urnas que chegam primeiro podem votar diferente das últimas, então a estimativa pode errar.</div>
+    </section>`;
+  }
+
   // Percentual de seções (urnas) totalizadas em cada UF e no exterior. Usa os arquivos de presidente que o
   // painel já baixa, então não faz nenhum pedido a mais ao TSE.
   function blocoUrnas() {
@@ -754,16 +890,26 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
 
   function telaBrasil() {
+    if (segundo()) {
+      const ufsGov = UFS.filter((uf) => teve2t(uf, 3) === true).length;
+      return `<div class="titulo-pagina"><h1>Brasil</h1><span class="sub">2º turno: presidente${ufsGov ? ` e governador em ${ufsGov} estados` : ' e governadores'}</span></div>
+        ${pres2t() ? `${filtroRegiao()}
+          ${st.regiao ? blocoRegiao() : blocoMajoritario('br', 1, { grande: true, top: 2 }) + blocoProjecao()}
+          ${blocoUrnas()}` : avisoSem2t('br', 1)}
+        ${mapa()}
+        ${tabelaUFs()}`;
+    }
     return `<div class="titulo-pagina"><h1>Brasil</h1><span class="sub">Presidente, governadores e senadores dos 27 estados</span></div>
       ${filtroRegiao()}
-      ${st.regiao ? blocoRegiao() : blocoMajoritario('br', 1, { grande: true, top: 4 })}
+      ${st.regiao ? blocoRegiao() : blocoMajoritario('br', 1, { grande: true, top: 4 }) + blocoProjecao()}
       ${blocoUrnas()}
       ${mapa()}
       ${tabelaUFs()}`;
   }
 
   /* ---------- municípios ---------- */
-  const cargosMun = (uf) => (uf === 'zz' ? [1] : [1, 3, 5, 6, N.cargoEstadual(uf)]);
+  const cargosMun = (uf) => (segundo() ? (uf === 'zz' ? [1] : [1, 3]).filter((c) => (c === 1 ? pres2t() : gov2t(uf)))
+    : uf === 'zz' ? [1] : [1, 3, 5, 6, N.cargoEstadual(uf)]);
   // A lista de municípios vem de um arquivo do TSE por eleição (estadual para as UFs, federal para o exterior),
   // baixado uma vez só, quando alguém abre uma UF.
   function eleicaoMun(uf) { return uf === 'zz' ? st.eleicoes.federal[1] : st.eleicoes.estadual[1]; }
@@ -811,7 +957,8 @@ tr.clicavel:hover td { background: var(--surface-2); }
       const abr = `${uf}:${sel}`;
       const ce = N.cargoEstadual(uf);
       resultado = `<div class="mun-escolhido"><h2>${esc(nomeAbr(abr))}</h2><button type="button" class="btn" data-mun="${uf}:">Fechar município</button></div>` +
-        (exterior ? blocoMajoritario(abr, 1, { grande: true, top: 6, prefixo: 'mun-' }) :
+        (segundo() ? `<div class="grade-2">${cargosMun(uf).reverse().map((c) => blocoMajoritario(abr, c, { grande: true, top: 2, prefixo: 'mun-' })).join('')}</div>` :
+        exterior ? blocoMajoritario(abr, 1, { grande: true, top: 6, prefixo: 'mun-' }) :
           `<div class="grade-2">${blocoMajoritario(abr, 3, { grande: true, top: 6, prefixo: 'mun-' })}${blocoMajoritario(abr, 5, { grande: true, top: 6, prefixo: 'mun-' })}</div>
           ${blocoMajoritario(abr, 1, { top: 4, prefixo: 'mun-' })}
           ${blocoProporcional(abr, 6, { prefixo: 'mun-' })}
@@ -889,11 +1036,17 @@ tr.clicavel:hover td { background: var(--surface-2); }
 
   function telaExterior() {
     return `<div class="titulo-pagina"><h1>Exterior</h1><span class="sub">Brasileiros que votam fora do país. No exterior só há eleição para presidente.</span></div>
-      ${blocoMajoritario('zz', 1, { grande: true, top: 6 })}
-      ${blocoPaises()}`;
+      ${segundo() && !pres2t() ? avisoSem2t('br', 1) : `${blocoMajoritario('zz', 1, { grande: true, top: 6 })}
+      ${blocoPaises()}`}`;
   }
 
   function telaUF(uf) {
+    if (segundo()) {
+      return `<div class="titulo-pagina"><h1>${esc(N.NOME_UF[uf])}</h1>
+          <nav class="atalhos" aria-label="Cargos"><a href="#governador" data-pular="governador">Governador</a><a href="#presidente" data-pular="presidente">Presidente</a><a href="#municipios" data-pular="municipios">Municípios</a></nav></div>
+        <div class="grade-2">${gov2t(uf) ? blocoMajoritario(uf, 3, { grande: true, top: 2 }) : avisoSem2t(uf, 3)}${pres2t() ? blocoMajoritario(uf, 1, { grande: true, top: 2 }) : avisoSem2t('br', 1)}</div>
+        ${blocoMunicipios(uf)}`;
+    }
     const ce = N.cargoEstadual(uf);
     return `<div class="titulo-pagina"><h1>${esc(N.NOME_UF[uf])}</h1>
         <nav class="atalhos" aria-label="Cargos"><a href="#presidente" data-pular="presidente">Presidente</a><a href="#governador" data-pular="governador">Governador</a><a href="#senador" data-pular="senador">Senado</a><a href="#federal" data-pular="federal">Dep. Federal</a><a href="#estadual" data-pular="estadual">${ce === 8 ? 'Dep. Distrital' : 'Dep. Estadual'}</a><a href="#municipios" data-pular="municipios">Municípios</a></nav></div>
@@ -933,14 +1086,15 @@ tr.clicavel:hover td { background: var(--surface-2); }
   /* ---------- navegação ---------- */
   function irPara(vista, rolar = true) {
     st.vista = vista;
+    if (segundo()) $('#troca-turno').setAttribute('href', '?turno=1' + (vista === 'br' ? '' : '#' + vista));
     const hash = (st.modo === 'demo' ? 'demo' : '') + (vista === 'br' ? '' : (st.modo === 'demo' ? '-' : '') + vista);
     try { history.replaceState(null, '', hash ? '#' + hash : location.pathname + location.search); } catch (e) { /* sandbox */ }
     render();
     if (rolar) window.scrollTo({ top: 0 });
     // os deputados da UF só são baixados quando a UF é aberta
-    if (vista === 'zz' && !dado('zz', 1)) carregar('zz', 1).then(render);
+    if (vista === 'zz' && pres2t() && !dado('zz', 1)) carregar('zz', 1).then(render);
     if (vista !== 'br') garantirListaMun(vista);
-    if (UFS.includes(vista)) {
+    if (UFS.includes(vista) && !segundo()) {
       const faltam = [6, N.cargoEstadual(vista)].filter((c) => !dado(vista, c));
       if (faltam.length) Promise.all(faltam.map((c) => carregar(vista, c))).then(render);
     }
@@ -1014,6 +1168,12 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
 
   /* ---------- início ---------- */
+  $('#cod-eleicoes').textContent = `${st.eleicoes.federal[st.turno]} (federal) e ${st.eleicoes.estadual[st.turno]} (estadual)`;
+  if (!segundo()) {
+    $('#turno-txt').textContent = '1º turno · 4 de outubro';
+    $('#troca-turno').textContent = 'ver 2º turno';
+    $('#troca-turno').setAttribute('href', location.pathname);
+  }
   const h = location.hash.replace('#', '').toLowerCase();
   const m = /^(demo)?-?([a-z]{2})?$/.exec(h);
   if (m && m[2] && (UFS.includes(m[2]) || m[2] === 'zz')) st.vista = m[2];
