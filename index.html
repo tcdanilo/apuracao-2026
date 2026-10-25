@@ -237,7 +237,7 @@ tr.clicavel:hover td { background: var(--surface-2); }
   // Só é carregado depois que o visitante aceita os cookies (LGPD).
   const GA_ID = 'G-JQJT50GZTW';
   // Chat (Chatango): o nome do grupo criado em chatango.com, ex.: 'apuracao2026'. Vazio = sem chat.
-  const CHATANGO_GRUPO = '';
+  const CHATANGO_GRUPO = 'apuracao2026';
 
   const st = {
     modo: 'direto',              // direto | proxy | demo
@@ -1206,14 +1206,15 @@ tr.clicavel:hover td { background: var(--surface-2); }
   function iniciarChat() {
     if (!/^[a-z0-9-]{3,30}$/i.test(CHATANGO_GRUPO) || document.getElementById('chat-chatango')) return;
     const sc = document.createElement('script');
-    sc.id = 'cid0020000' + String(Date.now()).slice(-9);
+    sc.id = 'cid0020000453960648935';            // id do código que o Chatango gerou para o grupo
     sc.setAttribute('data-cfasync', 'false');
     sc.async = true;
     sc.src = 'https://st.chatango.com/js/gz/emb.js';
     sc.style.cssText = 'width:300px;height:420px';
     sc.textContent = JSON.stringify({ handle: CHATANGO_GRUPO.toLowerCase(), arch: 'js',
-      styles: { a: '1f6f43', b: 100, c: 'FFFFFF', d: 'FFFFFF', k: '1f6f43', l: '1f6f43', m: '1f6f43', n: 'FFFFFF', p: '10', q: '1f6f43', r: 100,
-        pos: 'br', cv: 1, cvbg: '1f6f43', cvw: 200, cvh: 30, ticker: 1, fwtickm: 1 } });
+      // cores do grupo (verde 006600); pos/cv deixam o chat fechado num botão no canto de baixo à direita
+      styles: { a: '006600', b: 100, c: 'FFFFFF', d: 'FFFFFF', k: '006600', l: '006600', m: '006600', n: 'FFFFFF', p: '10', q: '006600', r: 100,
+        fwtickm: 1, pos: 'br', cv: 1, cvbg: '006600', cvfg: 'FFFFFF', cvw: 75, cvh: 30 } });
     const caixa = document.createElement('div');
     caixa.id = 'chat-chatango';
     caixa.appendChild(sc);
