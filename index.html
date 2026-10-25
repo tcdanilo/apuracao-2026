@@ -70,6 +70,22 @@ button, select, input { font: inherit; color: inherit; }
 .btn.claro { background: transparent; color: inherit; border-color: rgba(127,127,127,.5); padding: 4px 10px; }
 .btn.primario { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* chat: coluna fixa ao lado dos resultados em telas largas; no celular, no início da página, antes dos resultados */
+.pagina.com-chat { max-width: 1560px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 0 18px; padding-right: 16px; align-items: start; }
+.pagina.com-chat main { max-width: none; margin: 0; }
+.chat { position: sticky; top: 12px; margin-top: 16px; background: var(--surface); border: 2px solid #006600; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; height: calc(100vh - 24px); max-height: 820px; }
+.chat[hidden] { display: none; }
+.chat-topo { background: #006600; color: #fff; padding: 8px 12px; font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.chat-topo b { font: 700 17px/1.2 var(--font-display); text-transform: uppercase; letter-spacing: .04em; }
+.chat-caixa { flex: 1; min-height: 0; }
+.chat-caixa iframe, .chat-caixa > * { width: 100% !important; height: 100% !important; border: 0; }
+/* com o chat, o topo e a barra de UFs acompanham a largura da página, para tudo ficar alinhado */
+body.com-chat .topo-in, body.com-chat .nav, body.com-chat .rodape { max-width: 1560px; }
+@media (max-width: 1100px) {
+  .pagina.com-chat { display: flex; flex-direction: column; align-items: stretch; padding-right: 0; }
+  .chat { order: -1; position: static; margin: 16px 16px 0; height: 340px; }
+  .chat-topo span { display: none; }
+}
 .aviso-cookies { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 30; max-width: 640px; margin: 0 auto; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.18); font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .aviso-cookies[hidden] { display: none; }
 .faixa-demo { background: var(--danger); color: #fff; text-align: center; padding: 6px 16px; font-weight: 700; font-size: 14px; }
@@ -200,7 +216,13 @@ tr.clicavel:hover td { background: var(--surface-2); }
 </header>
 <div id="faixa-demo" class="faixa-demo" hidden>DEMONSTRAÇÃO · candidatos, partidos e votos são fictícios · <button id="sair-demo" class="btn claro" type="button" style="color:#fff">Usar dados reais do TSE</button></div>
 <nav class="nav" id="nav" aria-label="Abrangência"></nav>
+<div class="pagina" id="pagina">
 <main id="conteudo"></main>
+<aside id="chat" class="chat" hidden aria-label="Chat ao vivo">
+  <div class="chat-topo"><b>Chat ao vivo</b> <span>Comente a apuração. Seja respeitoso.</span></div>
+  <div id="chat-chatango" class="chat-caixa"></div>
+</aside>
+</div>
 <div id="aviso-cookies" class="aviso-cookies" hidden>
   Usamos o Google Analytics para contar quantas pessoas acompanham a apuração. Ele grava cookies no seu navegador.
   <button type="button" class="btn claro" id="cookies-sim">Aceitar</button> <button type="button" class="btn" id="cookies-nao">Recusar</button>
@@ -1204,21 +1226,21 @@ tr.clicavel:hover td { background: var(--surface-2); }
   }
   // Janela de chat do Chatango: um botão no canto de baixo à direita, que abre a conversa.
   function iniciarChat() {
-    if (!/^[a-z0-9-]{3,30}$/i.test(CHATANGO_GRUPO) || document.getElementById('chat-chatango')) return;
+    const caixa = document.getElementById('chat-chatango');
+    if (!/^[a-z0-9-]{3,30}$/i.test(CHATANGO_GRUPO) || !caixa || caixa.firstChild) return;
+    $('#chat').hidden = false;
+    $('#pagina').classList.add('com-chat');
+    document.body.classList.add('com-chat');
     const sc = document.createElement('script');
     sc.id = 'cid0020000453960648935';            // id do código que o Chatango gerou para o grupo
     sc.setAttribute('data-cfasync', 'false');
     sc.async = true;
     sc.src = 'https://st.chatango.com/js/gz/emb.js';
-    sc.style.cssText = 'width:300px;height:420px';
+    sc.style.cssText = 'width:100%;height:100%';
     sc.textContent = JSON.stringify({ handle: CHATANGO_GRUPO.toLowerCase(), arch: 'js',
-      // cores do grupo (verde 006600); pos/cv deixam o chat fechado num botão no canto de baixo à direita
-      styles: { a: '006600', b: 100, c: 'FFFFFF', d: 'FFFFFF', k: '006600', l: '006600', m: '006600', n: 'FFFFFF', p: '10', q: '006600', r: 100,
-        fwtickm: 1, pos: 'br', cv: 1, cvbg: '006600', cvfg: 'FFFFFF', cvw: 75, cvh: 30 } });
-    const caixa = document.createElement('div');
-    caixa.id = 'chat-chatango';
+      // o mesmo código "Box" que o Chatango gerou para o grupo (verde 006600): a conversa fica sempre aberta
+      styles: { a: '006600', b: 100, c: 'FFFFFF', d: 'FFFFFF', k: '006600', l: '006600', m: '006600', n: 'FFFFFF', p: '10', q: '006600', r: 100, fwtickm: 1 } });
     caixa.appendChild(sc);
-    document.body.appendChild(caixa);
   }
 
   /* ---------- início ---------- */
